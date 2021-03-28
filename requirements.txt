@@ -1,3 +1,2 @@
-Telethon==1.14.0
-python-dotenv==v0.13.0
-pylint==2.5.3
+Telethon==1.21.1
+python-dotenv==v0.16.0

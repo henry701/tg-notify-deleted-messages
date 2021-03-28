@@ -1,10 +1,12 @@
+
 FROM python:3-alpine
 
 WORKDIR /usr/src/app
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY ./.env ./requirements.txt ./
+COPY ./src/. ./src
+COPY ./db/. ./db/
 
-COPY . .
+RUN pip install --no-cache-dir -r requirements.txt
 
 CMD [ "python", "./src/monitor.py" ]

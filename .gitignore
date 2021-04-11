@@ -54,22 +54,17 @@ coverage.xml
 *.mo
 *.pot
 
-# Django stuff:
 *.log
 local_settings.py
-db.sqlite3
-
-# Flask stuff:
 instance/
 .webassets-cache
+*.sqlite3
 
 # Scrapy stuff:
 .scrapy
 
-# Sphinx documentation
 docs/_build/
 
-# PyBuilder
 target/
 
 # Jupyter Notebook
@@ -105,5 +100,3 @@ venv.bak/
 
 # mypy
 .mypy_cache/
-
-db/

@@ -14,7 +14,7 @@ It also supports attachments, without storing them on your disk.
 3. Authenticate your account using command:
 
 ```bash
-docker-compose create --force-recreate --build app && docker-compose run app python ./src/monitor.py auth
+docker-compose create --force-recreate --build app && docker-compose run app python ./src/monitor.py authonly
 ```
 
 ## Start daemon
@@ -40,10 +40,6 @@ variable at the system level.
 The application supports attachments, but doesn't store them.
 
 **Be careful, your messages can fill your disk space.**
-
-## Security
-
-Message history and credentials are stored in the insecure SQLite database.
 
 ## Roadmap
 
@@ -71,7 +67,7 @@ you will receive the information only about the first version of the message.
 The best implementation would be to store all versions of the message and receive
 all of them.
 
-### Messages versions
+#### Messages versions
 
 As soon as your companion knows that you using this tool, they will start
 editing the messages, instead of deleting them. To handle this, we can store the

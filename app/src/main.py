@@ -24,7 +24,7 @@ from telethon.events import NewMessage, MessageDeleted
 from telethon.hints import MessageLike
 from telethon.tl.types import Message
 
-from packages.helpers import load_env, require_env, get_mention_username
+from packages.helpers import format_default_message_text, load_env, require_env, get_mention_username
 
 from packages.models.TelegramMessage import TelegramMessage
 from packages.models import Base
@@ -40,8 +40,6 @@ import nest_asyncio
 
 import pickle
 
-CLEAN_OLD_MESSAGES_SECONDS_INTERVAL = 60
-
 async def add_event_handlers(client : TelegramClient, sqlalchemy_session_maker : sessionmaker, notify_message_deletion : Coroutine[TelegramMessage, str, Any]):
     new_message_event = events.NewMessage(incoming=True, outgoing=bool(os.getenv('NOTIFY_OUTGOING_MESSAGES', 'True')))
     client.add_event_handler(get_on_new_message(sqlalchemy_session_maker=sqlalchemy_session_maker, client=client), new_message_event)
@@ -54,32 +52,19 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
         with sqlalchemy_session_maker() as sqlalchemy_session:
             messages = load_messages_from_event(event, sqlalchemy_session)
             sqlalchemy_session.commit()
-
-        log_deleted_usernames = []
-
-        proms : List[Task[Message]] = []
-
-        for message in messages:
-            user = await client.get_entity(message.from_id) if message.from_id else None
-            safe_userid = (str(user.id) if user else "0")
-            mention_username = await get_mention_username(user)
-
-            log_deleted_usernames.append(mention_username + " (" + safe_userid + ")")
-            text = "**Deleted message from: **[{username}](tg://user?id={id})\n".format(username=mention_username, id=safe_userid)
-            if message.text:
-                text += "**Message:** " + message.text
-
-            proms.append(asyncio.create_task(notify_message_deletion(message, text)))
-
+        
         logging.info(
-            "Got {deleted_messages_count} deleted messages. Has in DB {db_messages_count}. Users: {users}".format(
+            "Got {deleted_messages_count} deleted messages. Has in DB {db_messages_count}.".format(
                 deleted_messages_count=str(len(event.deleted_ids)),
                 db_messages_count=str(len(messages)),
-                users=", ".join(log_deleted_usernames))
+            )
         )
 
+        proms : List[Task[Message]] = []
+        for message in messages:
+            proms.append(client.loop.create_task(notify_message_deletion(message)))
         if proms:
-            await asyncio.wait(proms)
+            await asyncio.gather(*proms)
 
     return on_message_deleted
 
@@ -90,8 +75,9 @@ def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : Telegra
             orm_message = TelegramMessage(
                 id = message.id,
                 from_id = (await client.get_entity(message.from_id)).id if message.from_id else None,
+                peer_id = (await client.get_entity(message.peer_id)).id if message.peer_id else None,
                 text = message.message,
-                media = pickle.dumps(message.media),
+                media = pickle.dumps(message.media) if message.media else None,
                 timestamp = message.date
             )
             sqlalchemy_session.add(orm_message)
@@ -105,11 +91,10 @@ def load_messages_from_event(event: MessageDeleted.Event, sqlalchemy_session : S
     ).scalars().all()
     return db_results
 
-async def clean_old_messages_loop(sqlalchemy_session_maker : sessionmaker):
-    logging.info('Starting Clean Old Messages Loop')
-    messages_ttl_days = int(os.getenv('MESSAGES_TTL_DAYS', 14))
+async def clean_old_messages_loop(sqlalchemy_session_maker : sessionmaker, seconds_interval : int, ttl : timedelta):
+    logging.debug('Starting Clean Old Messages Loop')
     while True:
-        delete_from_time = datetime.now(tz=timezone.utc) - timedelta(days=messages_ttl_days)
+        delete_from_time = datetime.now(tz=timezone.utc) - ttl
         with sqlalchemy_session_maker() as sqlalchemy_session:
             res = sqlalchemy_session.execute(
                 delete(TelegramMessage).where(TelegramMessage.timestamp < delete_from_time)
@@ -117,15 +102,27 @@ async def clean_old_messages_loop(sqlalchemy_session_maker : sessionmaker):
             sqlalchemy_session.commit()
             count = res.rowcount
         logging.info(
-            f"Deleted {str(count)} messages older than {str(delete_from_time)} from DB"
+            f"Deleted {str(count)} messages older than {str(delete_from_time)} from DB. Sleeping for {seconds_interval} seconds..."
         )
-        await asyncio.sleep(CLEAN_OLD_MESSAGES_SECONDS_INTERVAL)
+        await asyncio.sleep(seconds_interval)
+
+def get_base_notify_message_deletion(sqlalchemy_session_maker : sessionmaker):
+    async def base_notify_message_deletion(message : TelegramMessage):
+        logging.debug("base_notify_message_deletion")
+        with sqlalchemy_session_maker() as session:
+                session.add(message)
+                message.deleted = True
+                session.commit()
+    return base_notify_message_deletion
 
 def get_default_notify_message_deletion(client : TelegramClient):
-    async def default_notify_message_deletion(message : TelegramMessage, info : str):
-        # TODO: Store in database, flip a flag or something
-        logging.info("default_notify_message_deletion")
-        await client.send_message("me", message=info, file=pickle.loads(message.media))
+    async def default_notify_message_deletion(message : TelegramMessage):
+        logging.debug("default_notify_message_deletion")
+        await client.send_message(
+            entity="me",
+            message=format_default_message_text(client, message),
+            file=pickle.loads(message.media) if message.media else None
+        )
     return default_notify_message_deletion
 
 async def main():
@@ -152,16 +149,25 @@ async def main():
     target_chat = os.getenv("TARGET_CHAT", "me")
     telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
 
-    notify_message_deletion = None
+    session_id = require_env("SESSION_ID")
+
+    configured_notify_message_deletion = None
     if telegram_bot_token is not None:
         if target_chat is None or target_chat == "me":
             print('Must provide TARGET_CHAT (except "me") if you want to use bot assistant!')
             exit(1)
         print('Using bot for message notification')
-        bot = BotAssistant(target_chat, telegram_api_id, telegram_api_hash, telegram_bot_token)
-        notify_message_deletion = bot.notify_message_deletion
+        bot = BotAssistant(
+            int(target_chat) if bool(os.getenv("TARGET_CHAT_IS_ID")) else target_chat,
+            telegram_api_id,
+            telegram_api_hash,
+            telegram_bot_token,
+            session=alchemy_telegram_container.new_session(session_id + "_bot")
+        )
+        await bot.__aenter__()
+        configured_notify_message_deletion = bot.notify_message_deletion
 
-    telegram_session = alchemy_telegram_container.new_session(require_env("SESSION_ID"))
+    telegram_session = alchemy_telegram_container.new_session(session_id)
 
     client = TelegramClient(session=telegram_session, api_id=telegram_api_id, api_hash=telegram_api_hash)
     nest_asyncio.apply(client.loop)
@@ -175,7 +181,6 @@ async def main():
         logging.info('Creating HTTP class and starting server...')
         auth_wrapper = { 'code': None, 'password': None }
         class MyHandler(BaseHTTPRequestHandler):
-            expecting_2fa = False
             # Handler for the GET requests
             def do_GET(self):
                 logging.info('Get request received')
@@ -192,11 +197,9 @@ async def main():
                         self.send_response(204)
                         self.end_headers()
                         return
-                    self.expecting_2fa = False
                     self.send_response(403)
                     self.end_headers()
                 except SessionPasswordNeededError:
-                    self.expecting_2fa = True
                     self.send_response(401)
                     self.end_headers()
         port = int(require_env("PORT"))
@@ -206,15 +209,23 @@ async def main():
                 logging.info(f"To continue, send GET request to following URL: https://<host>:{port}?code=<code here>&password=<2fa pass if enabled>")
                 httpd.handle_request()
 
-    logging.info('Before With Client')
+    logging.debug('Before With Client')
     async with client:
-        logging.info('Inside With Client')
-        if not notify_message_deletion:
-            notify_message_deletion = get_default_notify_message_deletion(client=client)
-        logging.info('Adding event handlers')
-        await add_event_handlers(client, sqlalchemy_session_maker, notify_message_deletion)
-        logging.info('Added event handlers')
-        await clean_old_messages_loop(sqlalchemy_session_maker)
+        logging.debug('Inside With Client')
+        if not configured_notify_message_deletion:
+            configured_notify_message_deletion = get_default_notify_message_deletion(client=client)
+        base_notify_message_deletion = get_base_notify_message_deletion(sqlalchemy_session_maker=sqlalchemy_session_maker)
+        async def actual_notify_message_deletion(client : TelegramClient):
+            await base_notify_message_deletion(client)
+            await configured_notify_message_deletion(client)
+        logging.debug('Adding event handlers')
+        await add_event_handlers(client, sqlalchemy_session_maker, actual_notify_message_deletion)
+        logging.debug('Added event handlers')
+        await clean_old_messages_loop(
+            sqlalchemy_session_maker=sqlalchemy_session_maker,
+            seconds_interval=int(os.getenv("CLEAN_OLD_MESSAGES_SECONDS_INTERVAL", 900)),
+            ttl=timedelta(days=int(os.getenv('MESSAGES_TTL_DAYS', 14)))
+        )
 
 if __name__ == "__main__":
     asyncio.run(main())

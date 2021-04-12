@@ -3,6 +3,7 @@ import pickle
 from typing import Union
 from telethon import TelegramClient, hints
 from telethon.sessions.abstract import Session
+from packages.helpers import format_default_message_text
 
 from packages.models.TelegramMessage import TelegramMessage
 
@@ -26,8 +27,13 @@ class BotAssistant():
             raise RuntimeError("Not started!")
         await self.client.__aexit__()
 
-    async def notify_message_deletion(self, message : TelegramMessage, info : str):
-        logging.info("bot_assistant notify_message_deletion")
+    async def notify_message_deletion(self, message : TelegramMessage):
+        logging.debug("bot_assistant notify_message_deletion")
         if(not self.client):
             raise RuntimeError("Not started!")
-        await self.client.send_message(entity=self.target_chat, message=info, file=pickle.loads(message.media)) 
+        logging.debug("bot_assistant notify_message_deletion send_message")
+        await self.client.send_message(
+            entity=self.target_chat,
+            message=format_default_message_text(message),
+            file=pickle.loads(message.media) if message.media else None
+        ) 

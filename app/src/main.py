@@ -1,14 +1,22 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
-from asyncio.tasks import Task
 import logging
 import os
 import pathlib
-import asyncio
-import sqlalchemy
 
+from packages.env_helpers import load_env, require_env
+
+BASE_DIR = pathlib.Path(__file__).parent.absolute().resolve()
+CONF_DIR = (BASE_DIR / '..' / 'conf').absolute().resolve()
+load_env(CONF_DIR)
+LOGGING_LEVEL = os.getenv("LOGGING_LEVEL", logging.INFO)
+logging.basicConfig(level=LOGGING_LEVEL, force=True)
+logging.getLogger('sqlalchemy.engine').setLevel(LOGGING_LEVEL)
+logging.getLogger('sqlalchemy').setLevel(LOGGING_LEVEL)
+
+import sqlalchemy
 from alchemysession import AlchemySessionContainer
-from sqlalchemy.engine.base import Engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import delete, select
@@ -24,12 +32,12 @@ from telethon.events import NewMessage, MessageDeleted
 from telethon.hints import MessageLike
 from telethon.tl.types import Message
 
-from packages.helpers import format_default_message_text, load_env, require_env, get_mention_username
-
 from packages.models.TelegramMessage import TelegramMessage
-from packages.models import Base
+from packages.models import Base, encrypt_type_searchable
 
 from packages.bot_assistant import BotAssistant
+
+import sqlalchemy_utils
 
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import ssl
@@ -39,6 +47,11 @@ from urllib.parse import urlparse
 import nest_asyncio
 
 import pickle
+
+import asyncio
+from asyncio.tasks import Task
+
+from packages.helpers import format_default_message_text
 
 async def add_event_handlers(client : TelegramClient, sqlalchemy_session_maker : sessionmaker, notify_message_deletion : Coroutine[TelegramMessage, str, Any]):
     new_message_event = events.NewMessage(incoming=True, outgoing=bool(os.getenv('NOTIFY_OUTGOING_MESSAGES', 'True')))
@@ -77,7 +90,7 @@ def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : Telegra
                 from_id = (await client.get_entity(message.from_id)).id if message.from_id else None,
                 peer_id = (await client.get_entity(message.peer_id)).id if message.peer_id else None,
                 text = message.message,
-                media = pickle.dumps(message.media) if message.media else None,
+                media = message.media,
                 timestamp = message.date
             )
             sqlalchemy_session.add(orm_message)
@@ -121,28 +134,25 @@ def get_default_notify_message_deletion(client : TelegramClient):
         await client.send_message(
             entity="me",
             message=format_default_message_text(client, message),
-            file=pickle.loads(message.media) if message.media else None
+            file=message.media
         )
     return default_notify_message_deletion
 
 async def main():
 
-    BASE_DIR = pathlib.Path(__file__).parent.absolute().resolve()
-
-    CONF_DIR = (BASE_DIR / '..' / 'conf').absolute().resolve()
-
-    load_env(CONF_DIR)
-
-    logging.basicConfig(level=os.getenv("LOGGING_LEVEL", logging.INFO))
-
-    old_sqlalchemy_engine = sqlalchemy.create_engine(require_env("DATABASE_URL"), echo=True, future=False)
+    old_sqlalchemy_engine = sqlalchemy.create_engine(require_env("DATABASE_URL"), echo=False, future=False)
     alchemy_telegram_container = AlchemySessionContainer(engine = old_sqlalchemy_engine, table_base=Base, manage_tables=False, table_prefix=os.getenv("SESSION_TABLE_PREFIX", 'thon_'))
 
-    sqlalchemy_engine = sqlalchemy.create_engine(require_env("DATABASE_URL"), echo=True, future=True)
+    sqlalchemy_engine = sqlalchemy.create_engine(require_env("DATABASE_URL"), echo=False, future=True)
     sqlalchemy_session_maker = sessionmaker(bind=sqlalchemy_engine, future=True, expire_on_commit=False)
 
-    # TODO: Encrypt thon_sessions->auth_key column with env-var if provided, as well!
-    Base.metadata.create_all(sqlalchemy_engine)
+    metadata : sqlalchemy.schema.MetaData = Base.metadata
+    for table in metadata.tables.values():
+        for column in table.columns:
+            logging.debug(f"Traversing Type: {column.type}")
+            if not isinstance(column.type, sqlalchemy_utils.types.encrypted.encrypted_type.StringEncryptedType):
+                column.type = encrypt_type_searchable(column.type)
+    metadata.create_all(sqlalchemy_engine)
 
     telegram_api_id = require_env("TELEGRAM_API_ID")
     telegram_api_hash = require_env("TELEGRAM_API_HASH")
@@ -155,9 +165,9 @@ async def main():
     configured_notify_message_deletion = None
     if telegram_bot_token is not None:
         if target_chat is None or target_chat == "me":
-            print('Must provide TARGET_CHAT (except "me") if you want to use bot assistant!')
+            logging.critical('Must provide TARGET_CHAT (except "me") if you want to use bot assistant!')
             exit(1)
-        print('Using bot for message notification')
+        logging.info('Using bot for message notification')
         bot = BotAssistant(
             int(target_chat) if bool(os.getenv("TARGET_CHAT_IS_ID")) else target_chat,
             telegram_api_id,
@@ -204,10 +214,11 @@ async def main():
                     self.send_response(401)
                     self.end_headers()
         port = int(require_env("PORT"))
+        host = os.getenv("HOST", "<host>")
         with HTTPServer(('0.0.0.0', port), MyHandler) as httpd:
             httpd.socket = ssl.wrap_socket(httpd.socket, certfile=str((CONF_DIR / 'server.pem').resolve()), server_side=True)
             while not await client.is_user_authorized():
-                logging.info(f"To continue, send GET request to following URL: https://<host>:{port}?code=<code here>&password=<2fa pass if enabled>")
+                logging.info(f"To continue, send GET request to following URL: https://{host}:{port}?code=<code here>&password=<2fa pass if enabled>")
                 httpd.handle_request()
 
     logging.debug('Before With Client')

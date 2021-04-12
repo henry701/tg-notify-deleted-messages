@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import logging
 import pickle
 from typing import Union
@@ -34,6 +36,6 @@ class BotAssistant():
         logging.debug("bot_assistant notify_message_deletion send_message")
         await self.client.send_message(
             entity=self.target_chat,
-            message=format_default_message_text(message),
-            file=pickle.loads(message.media) if message.media else None
+            message=format_default_message_text(self.client, message),
+            file=message.media
         ) 

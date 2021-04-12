@@ -64,8 +64,6 @@ async def add_event_handlers(client : TelegramClient, sqlalchemy_session_maker :
 def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : sessionmaker, notify_message_deletion : Coroutine[TelegramMessage, str, Any]):
 
     async def on_message_deleted(event: MessageDeleted.Event):
-        
-        await event.get_input_sender()
 
         with sqlalchemy_session_maker() as sqlalchemy_session:
             messages = load_messages_from_event(event, sqlalchemy_session)

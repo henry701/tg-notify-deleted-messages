@@ -5,6 +5,8 @@ services:
     build:
       context: .
       target: runner
+    image: tg-notify-deleted-messages-app:latest
+    container_name: tg-notify-deleted-messages-app
     stdin_open: true
     tty: true
     environment: 

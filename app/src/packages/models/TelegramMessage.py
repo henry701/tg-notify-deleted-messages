@@ -12,5 +12,5 @@ class TelegramMessage(Base):
     from_id = Column(encrypt_type_searchable(Integer()))
     text = Column(encrypt_type_safer(String(4096)))
     media = Column(encrypt_type_safer(BLOB()))
-    timestamp = Column(encrypt_type_searchable(TIMESTAMP(timezone=timezone.utc)), nullable=False)
-    deleted = Column(encrypt_type_searchable(Boolean()), nullable=False, default=False)
+    timestamp = Column(TIMESTAMP(timezone=timezone.utc), nullable=False)
+    deleted = Column(Boolean(), nullable=False, default=False)

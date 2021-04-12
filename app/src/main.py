@@ -5,6 +5,10 @@ import logging
 import os
 import pathlib
 
+from sqlalchemy import sql
+from sqlalchemy.sql.schema import Column
+from sqlalchemy.sql.type_api import TypeEngine
+
 from packages.env_helpers import load_env, require_env
 
 BASE_DIR = pathlib.Path(__file__).parent.absolute().resolve()
@@ -12,7 +16,6 @@ CONF_DIR = (BASE_DIR / '..' / 'conf').absolute().resolve()
 load_env(CONF_DIR)
 LOGGING_LEVEL = os.getenv("LOGGING_LEVEL", logging.INFO)
 logging.basicConfig(level=LOGGING_LEVEL, force=True)
-logging.getLogger('sqlalchemy.engine').setLevel(LOGGING_LEVEL)
 logging.getLogger('sqlalchemy').setLevel(LOGGING_LEVEL)
 
 import sqlalchemy
@@ -61,6 +64,8 @@ async def add_event_handlers(client : TelegramClient, sqlalchemy_session_maker :
 def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : sessionmaker, notify_message_deletion : Coroutine[TelegramMessage, str, Any]):
 
     async def on_message_deleted(event: MessageDeleted.Event):
+        
+        await event.get_input_sender()
 
         with sqlalchemy_session_maker() as sqlalchemy_session:
             messages = load_messages_from_event(event, sqlalchemy_session)
@@ -83,6 +88,7 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
 
 def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : TelegramClient):
     async def on_new_message(event: NewMessage.Event):
+        await event.get_input_sender()
         with sqlalchemy_session_maker() as sqlalchemy_session:
             message : telethon.tl.custom.message.Message = event.message
             orm_message = TelegramMessage(
@@ -133,24 +139,35 @@ def get_default_notify_message_deletion(client : TelegramClient):
         logging.debug("default_notify_message_deletion")
         await client.send_message(
             entity="me",
-            message=format_default_message_text(client, message),
+            message=await format_default_message_text(client, message),
             file=message.media
         )
     return default_notify_message_deletion
 
 async def main():
 
-    old_sqlalchemy_engine = sqlalchemy.create_engine(require_env("DATABASE_URL"), echo=False, future=False)
+    database_url = require_env("DATABASE_URL")
+    # Heroku Workaround
+    database_url = database_url.replace("postgres://", "postgresql://")
+
+    old_sqlalchemy_engine = sqlalchemy.create_engine(database_url, echo=False, future=False)
     alchemy_telegram_container = AlchemySessionContainer(engine = old_sqlalchemy_engine, table_base=Base, manage_tables=False, table_prefix=os.getenv("SESSION_TABLE_PREFIX", 'thon_'))
 
-    sqlalchemy_engine = sqlalchemy.create_engine(require_env("DATABASE_URL"), echo=False, future=True)
+    sqlalchemy_engine = sqlalchemy.create_engine(database_url, echo=False, future=True)
     sqlalchemy_session_maker = sessionmaker(bind=sqlalchemy_engine, future=True, expire_on_commit=False)
 
+    # Changing this logic for encryption selection requires adaptation of the underlying database, if existing!
     metadata : sqlalchemy.schema.MetaData = Base.metadata
+    black = (sqlalchemy_utils.types.encrypted.encrypted_type.StringEncryptedType)
+    white = (sqlalchemy.types.String, sqlalchemy.types.LargeBinary)
+    def final_predicate(col : Column):
+        return True
+    def white_predicate(col : Column):
+        return col.name.endswith('_id') or col.name in ['id', 'phone', ]
     for table in metadata.tables.values():
         for column in table.columns:
             logging.debug(f"Traversing Type: {column.type}")
-            if not isinstance(column.type, sqlalchemy_utils.types.encrypted.encrypted_type.StringEncryptedType):
+            if not isinstance(column.type, black) and (isinstance(column.type, white) or white_predicate(column)) and final_predicate(column):
                 column.type = encrypt_type_searchable(column.type)
     metadata.create_all(sqlalchemy_engine)
 

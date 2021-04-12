@@ -3,18 +3,21 @@ FROM python:3.9.4-alpine3.12 as base
 FROM base as common
 
 RUN apk --no-cache add openssl
+RUN apk --no-cache add libffi
+RUN apk --no-cache add libpq
 
 FROM common as builder
 RUN apk --no-cache add gcc
 RUN apk --no-cache add g++
 RUN apk --no-cache add python3-dev
 RUN apk --no-cache add dos2unix
-RUN apk --no-cache add libffi-dev
-RUN apk --no-cache add openssl-dev
 RUN apk --no-cache add musl-dev
 RUN apk --no-cache add cargo
+RUN apk --no-cache add postgresql-dev
+RUN apk --no-cache add libffi-dev
 RUN mkdir -p /usr/app/conf/
 COPY ./app/meta/requirements.txt /usr/app/meta/requirements.txt
+RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache -r /usr/app/meta/requirements.txt
 COPY ./app/meta/monkey/. /usr/app/meta/monkey/.
 # lmao

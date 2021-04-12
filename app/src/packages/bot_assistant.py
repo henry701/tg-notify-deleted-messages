@@ -36,6 +36,6 @@ class BotAssistant():
         logging.debug("bot_assistant notify_message_deletion send_message")
         await self.client.send_message(
             entity=self.target_chat,
-            message=format_default_message_text(self.client, message),
+            message=await format_default_message_text(self.client, message),
             file=message.media
         ) 

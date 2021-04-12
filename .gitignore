@@ -100,3 +100,9 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# Certificates
+*.pem
+*.cer
+*.crt
+*.der

@@ -141,6 +141,7 @@ async def main():
     sqlalchemy_engine = sqlalchemy.create_engine(require_env("DATABASE_URL"), echo=True, future=True)
     sqlalchemy_session_maker = sessionmaker(bind=sqlalchemy_engine, future=True, expire_on_commit=False)
 
+    # TODO: Encrypt thon_sessions->auth_key column with env-var if provided, as well!
     Base.metadata.create_all(sqlalchemy_engine)
 
     telegram_api_id = require_env("TELEGRAM_API_ID")

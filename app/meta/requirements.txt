@@ -3,3 +3,4 @@ python-dotenv>=v0.16.0,<v1.0.0
 SQLAlchemy>=1.4.6,<2.0.0
 telethon-session-sqlalchemy>=0.2.16,<1.0.0
 nest_asyncio>=1.5.1,<2.0.0
+cryptg>=0.2.post2,>1.0.0

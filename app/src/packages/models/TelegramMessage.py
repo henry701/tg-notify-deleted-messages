@@ -8,6 +8,7 @@ from . import Base, encrypt_type_searchable, encrypt_type_safer
 class TelegramMessage(Base):
     __tablename__ = 'telegram_messages'
     id = Column(encrypt_type_searchable(Integer()), nullable=False, primary_key=True)
+    # TODO: Store type of peer_id and from_id because apparently IDs can repeat accross different entity types :/
     peer_id = Column(encrypt_type_searchable(Integer()), nullable=False, primary_key=True)
     from_id = Column(encrypt_type_searchable(Integer()))
     text = Column(encrypt_type_safer(String(4096)))

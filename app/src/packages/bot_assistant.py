@@ -29,13 +29,16 @@ class BotAssistant():
             raise RuntimeError("Not started!")
         await self.client.__aexit__()
 
-    async def notify_message_deletion(self, message : TelegramMessage):
+    async def notify_message_deletion(self, message : TelegramMessage, client: TelegramClient):
         logging.debug("bot_assistant notify_message_deletion")
         if(not self.client):
             raise RuntimeError("Not started!")
         logging.debug("bot_assistant notify_message_deletion send_message")
+        # Ensure bot client sees the entity that the deleted message client sees
+        await self.client.get_entity(await client.get_entity(message.from_id))
+        await self.client.get_entity(await client.get_entity(message.peer_id))
         await self.client.send_message(
             entity=self.target_chat,
-            message=await format_default_message_text(self.client, message),
+            message=await format_default_message_text(client, message),
             file=message.media
         ) 

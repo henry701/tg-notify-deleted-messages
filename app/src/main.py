@@ -19,6 +19,7 @@ logging.getLogger('sqlalchemy').setLevel(os.getenv("SQLALCHEMY_LOGGING_LEVEL", D
 
 sqreen_token = os.getenv("SQREEN_TOKEN")
 if sqreen_token:
+    sqreen = None
     try:
         import sqreen
     except ImportError:

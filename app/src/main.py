@@ -16,7 +16,6 @@ CONF_DIR = (BASE_DIR / '..' / 'conf').absolute().resolve()
 load_env(CONF_DIR)
 LOGGING_LEVEL = os.getenv("LOGGING_LEVEL", logging.INFO)
 logging.basicConfig(level=LOGGING_LEVEL, force=True)
-logging.getLogger('sqlalchemy').setLevel(LOGGING_LEVEL)
 
 import sqlalchemy
 from alchemysession import AlchemySessionContainer

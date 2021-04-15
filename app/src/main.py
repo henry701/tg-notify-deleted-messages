@@ -8,9 +8,6 @@ import os
 import signal
 import pathlib
 
-import threading
-from types import FunctionType
-
 from packages.env_helpers import load_env, require_env
 
 BASE_DIR = pathlib.Path(__file__).parent.absolute().resolve()
@@ -19,6 +16,15 @@ load_env(CONF_DIR)
 DEFAULT_LOGGING_LEVEL = os.getenv("DEFAULT_LOGGING_LEVEL", logging.INFO)
 logging.basicConfig(level=os.getenv("ROOT_LOGGING_LEVEL", DEFAULT_LOGGING_LEVEL), force=True)
 logging.getLogger('sqlalchemy').setLevel(os.getenv("SQLALCHEMY_LOGGING_LEVEL", DEFAULT_LOGGING_LEVEL))
+
+sqreen_token = os.getenv("SQREEN_TOKEN")
+if sqreen_token:
+    try:
+        import sqreen
+    except ImportError:
+        logging.warning("Unable to import sqreen module")
+    if sqreen:
+        sqreen.start()
 
 from sqlalchemy import sql
 from sqlalchemy.sql.schema import Column
@@ -32,6 +38,9 @@ from alchemysession import AlchemySessionContainer
 from sqlalchemy.orm import sessionmaker, aliased
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import delete, select
+from sqlalchemy import sql
+from sqlalchemy.sql.schema import Column
+from sqlalchemy.sql.type_api import TypeEngine
 
 from telethon import TelegramClient, events
 import telethon

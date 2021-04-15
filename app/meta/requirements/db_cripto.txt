@@ -1,0 +1,2 @@
+sqlalchemy_utils>=0.36.8,<1.0.0
+cryptography>=3.4.7,<4.0.0

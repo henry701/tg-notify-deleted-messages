@@ -24,7 +24,8 @@ ARG SUPPORTS_PGSQL=1
 RUN if [[ "$SUPPORTS_PGSQL" -eq 1 ]]; then pip install --no-cache -r /usr/app/meta/requirements/pgsql.txt; fi
 RUN pip install --no-cache -r /usr/app/meta/requirements/db_cripto.txt
 RUN pip install --no-cache -r /usr/app/meta/requirements/perf.txt
-RUN pip install --no-cache -r /usr/app/meta/requirements/sqreen.txt
+ARG SUPPORTS_SQREEN=0
+RUN if [[ "$SUPPORTS_SQREEN" -eq 1 ]]; then pip install --no-cache -r /usr/app/meta/requirements/sqreen.txt; fi
 COPY ./app/meta/monkey/. /usr/app/meta/monkey/.
 # lmao
 RUN ["sed", "-i", "s/from sqlalchemy.orm.query import _ColumnEntity/from sqlalchemy.orm.context import _ColumnEntity/g", "/usr/local/lib/python3.9/site-packages/sqlalchemy_utils/functions/orm.py"]

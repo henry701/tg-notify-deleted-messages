@@ -26,6 +26,12 @@ async def get_mention_username(user):
     return mention_username
 
 async def build_telegram_peer(peer : Union[PeerUser, PeerChat, PeerChannel, None], client : TelegramClient, sqlalchemy_session : Session) -> TelegramPeer:
+    async def find_existing_peer(tele_peer):
+        return sqlalchemy_session.execute(
+            select(TelegramPeer)
+                .where(TelegramPeer.peer_id == tele_peer.peer_id)
+                .where(TelegramPeer.type == tele_peer.type)
+        ).scalar()
     if peer is None:
         return None
     got_entity = (await client.get_input_entity(peer))
@@ -34,11 +40,12 @@ async def build_telegram_peer(peer : Union[PeerUser, PeerChat, PeerChannel, None
         type = PeerType.from_type(type(got_entity), mandatory=True),
         access_hash = got_entity.access_hash if hasattr(got_entity, 'access_hash') else None,
     )
-    return sqlalchemy_session.execute(
-        select(TelegramPeer)
-            .where(TelegramPeer.peer_id == tele_peer.peer_id)
-            .where(TelegramPeer.type == tele_peer.type)
-    ).scalar() or tele_peer
+    existing_peer = await find_existing_peer(tele_peer)
+    if existing_peer:
+        return existing_peer
+    sqlalchemy_session.add(tele_peer)
+    sqlalchemy_session.commit()
+    return await find_existing_peer(tele_peer)
 
 def to_telethon_input_peer(telegram_peer : TelegramPeer) -> Union[InputPeerUser, InputPeerChannel, InputPeerChat]:
     return PeerType(telegram_peer.type).to_input_type(telegram_peer.peer_id, telegram_peer.access_hash)
@@ -50,7 +57,7 @@ async def refresh_client(client : TelegramClient):
 
 async def format_default_message_text(client : TelegramClient, message : TelegramMessage, tried : bool = False):
     try:
-        user = await client.get_entity(to_telethon_input_peer(message.from_peer)) if message.from_peer_id else None
+        user = await client.get_entity(to_telethon_input_peer(message.from_peer)) if message.from_peer else None
         chat = await client.get_entity(to_telethon_input_peer(message.chat_peer))
     except ValueError:
         if tried:

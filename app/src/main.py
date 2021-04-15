@@ -89,7 +89,7 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
             sqlalchemy_session.commit()
         
         logging.info(
-            "Got {deleted_messages_count} deleted messages. Has in DB {db_messages_count}.".format(
+            "Got {deleted_messages_count} deleted messages. Has in DB: {db_messages_count}.".format(
                 deleted_messages_count=str(len(event.deleted_ids)),
                 db_messages_count=str(len(messages)),
             )
@@ -224,13 +224,20 @@ async def main():
     black = (sqlalchemy_utils.types.encrypted.encrypted_type.StringEncryptedType)
     white = (sqlalchemy.types.String, sqlalchemy.types.LargeBinary)
     def final_predicate(col : Column):
+        if col.autoincrement is True:
+            return False
+        for fk in col.foreign_keys:
+            if not encrypt_agg(fk.column):
+                return False
         return True
     def white_predicate(col : Column):
         return col.name.endswith('_id') or col.name in ['id', 'phone', ]
+    def encrypt_agg(column : Column):
+        return not isinstance(column.type, black) and (isinstance(column.type, white) or white_predicate(column)) and final_predicate(column)
     for table in metadata.tables.values():
         for column in table.columns:
             logging.debug(f"Traversing Type: {column.type}")
-            if not isinstance(column.type, black) and (isinstance(column.type, white) or white_predicate(column)) and final_predicate(column):
+            if encrypt_agg(column):
                 column.type = encrypt_type_searchable(column.type)
     metadata.create_all(sqlalchemy_engine)
 

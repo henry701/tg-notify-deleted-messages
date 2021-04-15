@@ -18,9 +18,17 @@ async def get_mention_username(user):
         mention_username = user.id
     return mention_username
 
-async def format_default_message_text(client : TelegramClient, message : TelegramMessage):
-    user = await client.get_entity(message.from_id) if message.from_id else None
-    chat = await client.get_entity(message.peer_id)
+async def format_default_message_text(client : TelegramClient, message : TelegramMessage, tried : bool = False):
+    try:
+        user = await client.get_entity(message.from_id) if message.from_id else None
+        chat = await client.get_entity(message.peer_id)
+    except ValueError:
+        if tried:
+            raise
+        await client.get_dialogs()
+        await client.get_me()
+        await client.get_messages(limit=10)
+        return format_default_message_text(client=client, message=message, tried=True)
     mention_username = await get_mention_username(user)
     mention_chatname = await get_mention_username(chat)
     text = "**Deleted message from: **[{username}](tg://user?id={userid}) on chat [{chatname}](tg://chat?id={chatid})\n".format(

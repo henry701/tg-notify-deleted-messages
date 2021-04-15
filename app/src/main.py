@@ -86,7 +86,11 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
 
 def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : TelegramClient):
     async def on_new_message(event: NewMessage.Event):
+        # Cache Lib (Telethon bad)
+        await event.get_sender()
         await event.get_input_sender()
+        await event.get_chat()
+        await event.get_input_chat()
         with sqlalchemy_session_maker() as sqlalchemy_session:
             message : telethon.tl.custom.message.Message = event.message
             orm_message = TelegramMessage(

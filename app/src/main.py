@@ -1,40 +1,52 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+from asyncio.base_events import BaseEventLoop
 import logging
+import functools
 import os
+import signal
 import pathlib
 
-from sqlalchemy import sql
-from sqlalchemy.sql.schema import Column
-from sqlalchemy.sql.type_api import TypeEngine
+import threading
+from types import FunctionType
 
 from packages.env_helpers import load_env, require_env
 
 BASE_DIR = pathlib.Path(__file__).parent.absolute().resolve()
 CONF_DIR = (BASE_DIR / '..' / 'conf').absolute().resolve()
 load_env(CONF_DIR)
-LOGGING_LEVEL = os.getenv("LOGGING_LEVEL", logging.INFO)
-logging.basicConfig(level=LOGGING_LEVEL, force=True)
+DEFAULT_LOGGING_LEVEL = os.getenv("DEFAULT_LOGGING_LEVEL", logging.INFO)
+logging.basicConfig(level=os.getenv("ROOT_LOGGING_LEVEL", DEFAULT_LOGGING_LEVEL), force=True)
+logging.getLogger('sqlalchemy').setLevel(os.getenv("SQLALCHEMY_LOGGING_LEVEL", DEFAULT_LOGGING_LEVEL))
+
+from sqlalchemy import sql
+from sqlalchemy.sql.schema import Column
+from sqlalchemy.sql.type_api import TypeEngine
+
+from packages.models.root.TelegramPeer import TelegramPeer
+from packages.models.support.PeerType import PeerType
 
 import sqlalchemy
 from alchemysession import AlchemySessionContainer
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, aliased
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import delete, select
 
 from telethon import TelegramClient, events
 import telethon
 
+import contextlib
+
 from telethon.errors import SessionPasswordNeededError
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Coroutine, List
+from typing import Any, Callable, Coroutine, List, Union
 from telethon.events import NewMessage, MessageDeleted
-from telethon.hints import MessageLike
-from telethon.tl.types import Message
+from telethon.hints import Entity, MessageLike
+from telethon.tl.types import Message, PeerChannel, PeerChat, PeerUser
 
-from packages.models.TelegramMessage import TelegramMessage
+from packages.models.root.TelegramMessage import TelegramMessage
 from packages.models import Base, encrypt_type_searchable
 
 from packages.bot_assistant import BotAssistant
@@ -48,12 +60,11 @@ from urllib.parse import urlparse
 
 import nest_asyncio
 
-import pickle
-
 import asyncio
 from asyncio.tasks import Task
 
-from packages.helpers import format_default_message_text
+
+from packages.helpers import build_telegram_peer, format_default_message_text
 
 async def add_event_handlers(client : TelegramClient, sqlalchemy_session_maker : sessionmaker, notify_message_deletion : Coroutine[TelegramMessage, TelegramClient, Any]):
     new_message_event = events.NewMessage(incoming=True, outgoing=bool(os.getenv('NOTIFY_OUTGOING_MESSAGES', 'True')))
@@ -65,7 +76,7 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
     async def on_message_deleted(event: MessageDeleted.Event):
 
         with sqlalchemy_session_maker() as sqlalchemy_session:
-            messages = load_messages_from_event(event, sqlalchemy_session)
+            messages = await load_messages_from_event(event, sqlalchemy_session)
             sqlalchemy_session.commit()
         
         logging.info(
@@ -85,17 +96,18 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
 
 def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : TelegramClient):
     async def on_new_message(event: NewMessage.Event):
+        logging.debug(f"on_new_message: {event}")
+        logging.debug("START cache lib telethon bad")
         # Cache Lib (Telethon bad)
-        await event.get_sender()
         await event.get_input_sender()
-        await event.get_chat()
         await event.get_input_chat()
+        logging.debug("END cache lib telethon bad")
         with sqlalchemy_session_maker() as sqlalchemy_session:
             message : telethon.tl.custom.message.Message = event.message
             orm_message = TelegramMessage(
                 id = message.id,
-                from_id = (await client.get_entity(message.from_id)).id if message.from_id else None,
-                peer_id = (await client.get_entity(message.peer_id)).id if message.peer_id else None,
+                from_peer = await build_telegram_peer(event.from_id, client, sqlalchemy_session),
+                chat_peer = await build_telegram_peer(event.peer_id, client, sqlalchemy_session),
                 text = message.message,
                 media = message.media,
                 timestamp = message.date
@@ -104,17 +116,18 @@ def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : Telegra
             sqlalchemy_session.commit()
     return on_new_message
 
-def load_messages_from_event(event: MessageDeleted.Event, sqlalchemy_session : Session) -> List[TelegramMessage]:
+async def load_messages_from_event(event: MessageDeleted.Event, sqlalchemy_session : Session) -> List[TelegramMessage]:
     logging.debug(f"Searching for messages in {event.deleted_ids}")
+    peer_type = PeerType.from_type(type(await event.get_input_chat()))
     db_results = sqlalchemy_session.execute(
         select(TelegramMessage)
             .where(TelegramMessage.id.in_(event.deleted_ids))
-            # TODO: Filter by chat peer as well because message IDs can duplicate accross chats
-            # .where(TelegramMessage.peer_id == event.chat_peer)
+            .where(event.chat_id is None or TelegramMessage.chat_peer.peer_id == event.chat_id)
+            .where(peer_type is None or TelegramMessage.chat_peer.type == peer_type)
     ).scalars().all()
     return db_results
 
-async def clean_old_messages_loop(sqlalchemy_session_maker : sessionmaker, seconds_interval : int, ttl : timedelta):
+async def clean_old_messages_loop(sqlalchemy_session_maker : sessionmaker, seconds_interval : int, ttl : timedelta, stop_event : asyncio.Event):
     logging.debug('Starting Clean Old Messages Loop')
     while True:
         delete_from_time = datetime.now(tz=timezone.utc) - ttl
@@ -127,7 +140,10 @@ async def clean_old_messages_loop(sqlalchemy_session_maker : sessionmaker, secon
         logging.info(
             f"Deleted {str(count)} messages older than {str(delete_from_time)} from DB. Sleeping for {seconds_interval} seconds..."
         )
-        await asyncio.sleep(seconds_interval)
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(stop_event.wait(), seconds_interval)
+        if stop_event.is_set():
+            break
 
 def get_base_notify_message_deletion(sqlalchemy_session_maker : sessionmaker) -> Coroutine[TelegramMessage, TelegramClient, Any]:
     async def base_notify_message_deletion(message : TelegramMessage, client : TelegramClient):
@@ -148,7 +164,41 @@ def get_default_notify_message_deletion() -> Coroutine[TelegramMessage, Telegram
         )
     return default_notify_message_deletion
 
+def ask_exit(signame, loop : BaseEventLoop, additional):
+    logging.warning("got signal %s: exiting" % signame)
+    if additional:
+        logging.warning("running user-provided cleanupper")
+        try:
+            loop.run_until_complete(additional())
+        except RuntimeError as e:
+            if not "Event loop stopped before Future completed" in str(e):
+                raise
+        logging.warning("ran user-provided cleanupper")
+    logging.warning("cancelling all tasks")
+    for task in asyncio.all_tasks(loop):
+        task.cancel()
+    logging.warning("cancelled all tasks")
+
 async def main():
+
+    loop = asyncio.get_running_loop()
+    stop_event = asyncio.Event()
+
+    async def closer():
+        stop_event.set()
+        if client:
+            await client.__aexit__(None, None, None)
+        if bot:
+            await bot.__aexit__(None, None, None)
+        count = 0
+        while asyncio.all_tasks(loop) and count < 5:
+            await asyncio.sleep(1)
+            count += 1
+
+    for signame in {'SIGINT', 'SIGTERM'}:
+        loop.add_signal_handler(
+            getattr(signal, signame),
+            functools.partial(ask_exit, signame, loop, closer))
 
     database_url = require_env("DATABASE_URL")
     # Heroku Workaround
@@ -257,8 +307,10 @@ async def main():
         await clean_old_messages_loop(
             sqlalchemy_session_maker=sqlalchemy_session_maker,
             seconds_interval=int(os.getenv("CLEAN_OLD_MESSAGES_SECONDS_INTERVAL", 900)),
-            ttl=timedelta(days=int(os.getenv('MESSAGES_TTL_DAYS', 14)))
+            ttl=timedelta(days=int(os.getenv('MESSAGES_TTL_DAYS', 14))),
+            stop_event=stop_event
         )
 
 if __name__ == "__main__":
     asyncio.run(main())
+    logging.info("bye!")

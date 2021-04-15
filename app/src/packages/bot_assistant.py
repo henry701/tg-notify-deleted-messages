@@ -7,7 +7,7 @@ from telethon import TelegramClient, hints
 from telethon.sessions.abstract import Session
 from packages.helpers import format_default_message_text
 
-from packages.models.TelegramMessage import TelegramMessage
+from packages.models.root.TelegramMessage import TelegramMessage
 
 class BotAssistant():
 
@@ -24,19 +24,16 @@ class BotAssistant():
         await client.sign_in(bot_token=self.bot_token)
         self.client = client
 
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(self, *args):
         if(not self.client):
             raise RuntimeError("Not started!")
-        await self.client.__aexit__()
+        await self.client.__aexit__(*args)
 
     async def notify_message_deletion(self, message : TelegramMessage, client: TelegramClient):
         logging.debug("bot_assistant notify_message_deletion")
         if(not self.client):
             raise RuntimeError("Not started!")
         logging.debug("bot_assistant notify_message_deletion send_message")
-        # Ensure bot client sees the entity that the deleted message client sees
-        await self.client.get_entity(await client.get_entity(message.from_id))
-        await self.client.get_entity(await client.get_entity(message.peer_id))
         await self.client.send_message(
             entity=self.target_chat,
             message=await format_default_message_text(client, message),

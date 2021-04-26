@@ -24,11 +24,11 @@ docker-compose stop app
 
 ## Disk usage and attachments
 
-`tg-notify-deleted-messages` store messages history for the time specified
+`tg-notify-deleted-messages` stores message history for the time specified
 in the `MESSAGES_TTL_DAYS` environment variable, with default TTL: 14 days.
 
-You can change this interval by changing the `.env` file, or defining environment
-variable at the system level.
+You can change this interval by changing the `.env` file or by defining environment
+variables at the system level.
 
 **Be careful, your messages can fill your disk space.**
 

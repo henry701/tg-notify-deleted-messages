@@ -73,11 +73,12 @@ import nest_asyncio
 import asyncio
 from asyncio.tasks import Task
 
+from distutils.util import strtobool
 
 from packages.helpers import build_telegram_peer, format_default_message_text
 
 async def add_event_handlers(client : TelegramClient, sqlalchemy_session_maker : sessionmaker, notify_message_deletion : Coroutine[TelegramMessage, TelegramClient, Any]):
-    new_message_event = events.NewMessage(incoming=True, outgoing=bool(os.getenv('NOTIFY_OUTGOING_MESSAGES', 'True')))
+    new_message_event = events.NewMessage(incoming=True, outgoing=bool(strtobool(os.getenv('NOTIFY_OUTGOING_MESSAGES', 'True'))))
     client.add_event_handler(get_on_new_message(sqlalchemy_session_maker=sqlalchemy_session_maker, client=client), new_message_event)
     client.add_event_handler(get_on_message_deleted(client=client, sqlalchemy_session_maker=sqlalchemy_session_maker, notify_message_deletion=notify_message_deletion), events.MessageDeleted())
 
@@ -257,7 +258,7 @@ async def main():
             exit(1)
         logging.info('Using bot for message notification')
         bot = BotAssistant(
-            int(target_chat) if bool(os.getenv("TARGET_CHAT_IS_ID")) else target_chat,
+            int(target_chat) if bool(strtobool(os.getenv("TARGET_CHAT_IS_ID"))) else target_chat,
             telegram_api_id,
             telegram_api_hash,
             telegram_bot_token,
@@ -304,9 +305,12 @@ async def main():
         port = int(require_env("PORT"))
         host = os.getenv("HOST", "<host>")
         with HTTPServer(('0.0.0.0', port), MyHandler) as httpd:
-            httpd.socket = ssl.wrap_socket(httpd.socket, certfile=str((CONF_DIR / 'server.pem').resolve()), server_side=True)
+            use_https = bool(strtobool(os.getenv("USE_HTTPS", "0")))
+            use_external_port = bool(strtobool(os.getenv("USE_EXTERNAL_PORT", "0")))
+            if use_https:
+                httpd.socket = ssl.wrap_socket(httpd.socket, certfile=str((CONF_DIR / 'server.pem').resolve()), server_side=True)
             while not await client.is_user_authorized():
-                logging.info(f"To continue, send GET request to following URL: https://{host}:{port}?code=<code here>&password=<2fa pass if enabled>")
+                logging.info(f"To continue, send GET request to following URL: http{'s' if use_https else ''}://{host}{f':{port}' if use_external_port else ''}?code=<code here>&password=<2fa pass if enabled>")
                 httpd.handle_request()
 
     logging.debug('Before With Client')

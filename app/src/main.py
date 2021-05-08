@@ -130,12 +130,16 @@ def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : Telegra
 async def load_messages_from_event(event: MessageDeleted.Event, sqlalchemy_session : Session) -> List[TelegramMessage]:
     logging.debug(f"Searching for messages in {event.deleted_ids}")
     peer_type = PeerType.from_type(type(await event.get_input_chat()))
-    db_results = sqlalchemy_session.execute(
-        select(TelegramMessage)
-            .where(TelegramMessage.id.in_(event.deleted_ids))
-            .where(event.chat_id is None or TelegramMessage.chat_peer.peer_id == event.chat_id)
-            .where(peer_type is None or TelegramMessage.chat_peer.type == peer_type)
-    ).scalars().all()
+    the_query = select(TelegramMessage).where(TelegramMessage.id.in_(event.deleted_ids))
+    tele_peer_alias = None
+    if event.chat_id is not None:
+        tele_peer_alias = aliased(TelegramPeer)
+        the_query = the_query.join(TelegramMessage.chat_peer.of_type(tele_peer_alias)).where(TelegramPeer.peer_id == event.chat_id)
+    if peer_type is not None:
+        if tele_peer_alias is None:
+            tele_peer_alias = aliased(TelegramPeer)
+        the_query = the_query.join(TelegramMessage.chat_peer.of_type(tele_peer_alias)).where(TelegramPeer.type == peer_type)
+    db_results = sqlalchemy_session.execute(the_query).scalars().all()
     return db_results
 
 async def clean_old_messages_loop(sqlalchemy_session_maker : sessionmaker, seconds_interval : int, ttl : timedelta, stop_event : asyncio.Event):

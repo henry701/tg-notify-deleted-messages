@@ -1,6 +1,8 @@
 # Hidden root metafolders
 /.*
+# Exceptions to hidden metafolders and metafiles
 !.github
+!.gitignore
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

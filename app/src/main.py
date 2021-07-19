@@ -131,16 +131,10 @@ async def load_messages_from_event(event: MessageDeleted.Event, sqlalchemy_sessi
     logging.debug(f"Searching for messages in {event.deleted_ids}")
     peer_type = PeerType.from_type(type(await event.get_input_chat()))
     the_query = select(TelegramMessage).where(TelegramMessage.id.in_(event.deleted_ids))
-    tele_peer_alias = None
     if event.chat_id is not None:
-        tele_peer_alias = aliased(TelegramPeer)
-        the_query = the_query.join(TelegramMessage.chat_peer.of_type(tele_peer_alias)).where(TelegramPeer.peer_id == event.chat_id)
+        the_query = the_query.where(TelegramMessage.chat_peer.has(TelegramPeer.peer_id == event.chat_id))
     if peer_type is not None:
-        if tele_peer_alias is None:
-            tele_peer_alias = aliased(TelegramPeer)
-            the_query = the_query.join(TelegramMessage.chat_peer.of_type(tele_peer_alias)).where(TelegramPeer.type == peer_type)
-        else:
-            the_query = the_query.where(TelegramPeer.type == peer_type)
+        the_query = the_query.where(TelegramMessage.chat_peer.has(TelegramPeer.type == peer_type))
     db_results = sqlalchemy_session.execute(the_query).scalars().all()
     return db_results
 

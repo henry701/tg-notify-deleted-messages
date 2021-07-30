@@ -8,6 +8,8 @@ import os
 import signal
 import pathlib
 
+from sqlalchemy.sql.selectable import Select
+
 from packages.env_helpers import load_env, require_env
 
 BASE_DIR = pathlib.Path(__file__).parent.absolute().resolve()
@@ -51,7 +53,7 @@ import contextlib
 from telethon.errors import SessionPasswordNeededError
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Coroutine, List, Union
+from typing import Any, Callable, Coroutine, List, Tuple, Union
 from telethon.events import NewMessage, MessageDeleted
 from telethon.hints import Entity, MessageLike
 from telethon.tl.types import Message, PeerChannel, PeerChat, PeerUser
@@ -87,15 +89,39 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
     async def on_message_deleted(event: MessageDeleted.Event):
 
         with sqlalchemy_session_maker() as sqlalchemy_session:
-            messages = await load_messages_from_event(event, sqlalchemy_session)
+            (messages, query) = await load_messages_from_event(event, sqlalchemy_session)
             sqlalchemy_session.commit()
+
+        deleted_messages_count = len(event.deleted_ids)
+        deleted_messages_count_str = str(deleted_messages_count)
+
+        db_messages_count = len(messages)
+        db_messages_count_str = str(db_messages_count)
         
         logging.info(
             "Got {deleted_messages_count} deleted messages. Has in DB: {db_messages_count}.".format(
-                deleted_messages_count=str(len(event.deleted_ids)),
-                db_messages_count=str(len(messages)),
+                deleted_messages_count=deleted_messages_count_str,
+                db_messages_count=db_messages_count_str,
             )
         )
+
+        if deleted_messages_count > db_messages_count:
+            try:
+                logging.warning(
+                    "Got {deleted_messages_count} deleted messages but only found {db_messages_count} in database! Query: {query_str}".format(
+                        deleted_messages_count=deleted_messages_count_str,
+                        db_messages_count=db_messages_count_str,
+                        query_str=str(query.compile())
+                    )
+                )
+            except Exception as e:
+                logging.error(
+                    "Error while logging missing deleted message (has {db_messages_count} of {deleted_messages_count}): {e}".format(
+                        deleted_messages_count=deleted_messages_count_str,
+                        db_messages_count=db_messages_count_str,
+                        e=e
+                    )
+                )
 
         proms : List[Task[Message]] = []
         for message in messages:
@@ -127,7 +153,7 @@ def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : Telegra
             sqlalchemy_session.commit()
     return on_new_message
 
-async def load_messages_from_event(event: MessageDeleted.Event, sqlalchemy_session : Session) -> List[TelegramMessage]:
+async def load_messages_from_event(event: MessageDeleted.Event, sqlalchemy_session : Session) -> Tuple[List[TelegramMessage], Select]:
     logging.debug(f"Searching for messages in {event.deleted_ids}")
     peer_type = PeerType.from_type(type(await event.get_input_chat()))
     the_query = select(TelegramMessage).where(TelegramMessage.id.in_(event.deleted_ids))
@@ -136,7 +162,7 @@ async def load_messages_from_event(event: MessageDeleted.Event, sqlalchemy_sessi
     if peer_type is not None:
         the_query = the_query.where(TelegramMessage.chat_peer.has(TelegramPeer.type == peer_type))
     db_results = sqlalchemy_session.execute(the_query).scalars().all()
-    return db_results
+    return (db_results, the_query)
 
 async def clean_old_messages_loop(sqlalchemy_session_maker : sessionmaker, seconds_interval : int, ttl : timedelta, stop_event : asyncio.Event):
     logging.debug('Starting Clean Old Messages Loop')

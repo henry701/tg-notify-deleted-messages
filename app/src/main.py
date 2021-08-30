@@ -291,7 +291,11 @@ async def main():
             telegram_bot_token,
             session=alchemy_telegram_container.new_session(session_id + "_bot")
         )
-        await bot.__aenter__()
+        try:
+            await bot.__aenter__()
+        except AuthKeyDuplicatedError:
+            await bot.client.log_out()
+            await bot.__aenter__()
         configured_notify_message_deletion = bot.notify_message_deletion
 
     telegram_session = alchemy_telegram_container.new_session(session_id)

@@ -304,6 +304,8 @@ async def main():
         await client.connect()
     except AuthKeyDuplicatedError:
         telegram_session.delete()
+        client = TelegramClient(session=telegram_session, api_id=telegram_api_id, api_hash=telegram_api_hash)
+        nest_asyncio.apply(client.loop)
         await client.connect()
 
     if not await client.is_user_authorized():

@@ -20,15 +20,15 @@ class BotAssistant():
         self.session = session
 
     async def __aenter__(self):
-        client = TelegramClient(session=self.session, api_id=self.api_id, api_hash=self.api_hash)
-        self.client = client
+        self.client = TelegramClient(session=self.session, api_id=self.api_id, api_hash=self.api_hash)
         try:
-            await client.connect()
-            await client.sign_in(bot_token=self.bot_token)
+            await self.client.connect()
+            await self.client.sign_in(bot_token=self.bot_token)
         except AuthKeyDuplicatedError:
             self.session.delete()
-            await client.connect()
-            await client.sign_in(bot_token=self.bot_token)
+            self.client = TelegramClient(session=self.session, api_id=self.api_id, api_hash=self.api_hash)
+            await self.client.connect()
+            await self.client.sign_in(bot_token=self.bot_token)
 
     async def __aexit__(self, *args):
         if(not self.client):

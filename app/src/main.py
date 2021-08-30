@@ -9,6 +9,7 @@ import signal
 import pathlib
 
 from sqlalchemy.sql.selectable import Select
+from telethon.errors.rpcerrorlist import AuthKeyDuplicatedError
 
 from packages.env_helpers import load_env, require_env
 
@@ -297,7 +298,12 @@ async def main():
 
     client = TelegramClient(session=telegram_session, api_id=telegram_api_id, api_hash=telegram_api_hash)
     nest_asyncio.apply(client.loop)
-    await client.connect()
+
+    try:
+        await client.connect()
+    except AuthKeyDuplicatedError:
+        await client.log_out()
+        await client.connect()
 
     if not await client.is_user_authorized():
         phone = require_env("PHONE_NUMBER")

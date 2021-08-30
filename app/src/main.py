@@ -7,6 +7,7 @@ import functools
 import os
 import signal
 import pathlib
+import time
 
 from sqlalchemy.sql.selectable import Select
 from telethon.errors.rpcerrorlist import AuthKeyDuplicatedError
@@ -365,5 +366,6 @@ async def main():
         )
 
 if __name__ == "__main__":
+    time.sleep(os.getenv("SLEEP_INIT_SECONDS", 10))
     asyncio.run(main())
     logging.info("bye!")

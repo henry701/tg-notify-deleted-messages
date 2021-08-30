@@ -303,7 +303,7 @@ async def main():
     try:
         await client.connect()
     except AuthKeyDuplicatedError:
-        await client.log_out()
+        telegram_session.delete()
         await client.connect()
 
     if not await client.is_user_authorized():

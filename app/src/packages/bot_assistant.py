@@ -26,7 +26,7 @@ class BotAssistant():
             await client.connect()
             await client.sign_in(bot_token=self.bot_token)
         except AuthKeyDuplicatedError:
-            await client.log_out()
+            self.session.delete()
             await client.connect()
             await client.sign_in(bot_token=self.bot_token)
 

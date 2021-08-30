@@ -366,6 +366,6 @@ async def main():
         )
 
 if __name__ == "__main__":
-    time.sleep(os.getenv("SLEEP_INIT_SECONDS", 10))
+    time.sleep(int(os.getenv("SLEEP_INIT_SECONDS", 10)))
     asyncio.run(main())
     logging.info("bye!")

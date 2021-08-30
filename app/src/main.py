@@ -290,7 +290,7 @@ async def main():
             telegram_api_id,
             telegram_api_hash,
             telegram_bot_token,
-            session=alchemy_telegram_container.new_session(session_id + "_bot")
+            session_maker = lambda: alchemy_telegram_container.new_session(session_id + "_bot")
         )
         await bot.__aenter__()
         configured_notify_message_deletion = bot.notify_message_deletion
@@ -304,6 +304,7 @@ async def main():
         await client.connect()
     except AuthKeyDuplicatedError:
         telegram_session.delete()
+        telegram_session = alchemy_telegram_container.new_session(session_id)
         client = TelegramClient(session=telegram_session, api_id=telegram_api_id, api_hash=telegram_api_hash)
         nest_asyncio.apply(client.loop)
         await client.connect()

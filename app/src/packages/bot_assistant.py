@@ -4,6 +4,7 @@ import logging
 import pickle
 from typing import Union
 from telethon import TelegramClient, hints
+from telethon.errors.rpcerrorlist import AuthKeyDuplicatedError
 from telethon.sessions.abstract import Session
 from packages.helpers import format_default_message_text
 
@@ -21,8 +22,13 @@ class BotAssistant():
     async def __aenter__(self):
         client = TelegramClient(session=self.session, api_id=self.api_id, api_hash=self.api_hash)
         self.client = client
-        await client.connect()
-        await client.sign_in(bot_token=self.bot_token)
+        try:
+            await client.connect()
+            await client.sign_in(bot_token=self.bot_token)
+        except AuthKeyDuplicatedError:
+            await client.log_out()
+            await client.connect()
+            await client.sign_in(bot_token=self.bot_token)
 
     async def __aexit__(self, *args):
         if(not self.client):

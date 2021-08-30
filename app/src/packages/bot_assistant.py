@@ -20,14 +20,15 @@ class BotAssistant():
 
     async def __aenter__(self):
         client = TelegramClient(session=self.session, api_id=self.api_id, api_hash=self.api_hash)
+        self.client = client
         await client.connect()
         await client.sign_in(bot_token=self.bot_token)
-        self.client = client
 
     async def __aexit__(self, *args):
         if(not self.client):
             raise RuntimeError("Not started!")
         await self.client.__aexit__(*args)
+        self.client = None
 
     async def notify_message_deletion(self, message : TelegramMessage, client: TelegramClient):
         logging.debug("bot_assistant notify_message_deletion")

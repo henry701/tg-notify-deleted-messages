@@ -295,6 +295,7 @@ async def main():
             await bot.__aenter__()
         except AuthKeyDuplicatedError:
             await bot.client.log_out()
+            await bot.__aexit__()
             await bot.__aenter__()
         configured_notify_message_deletion = bot.notify_message_deletion
 

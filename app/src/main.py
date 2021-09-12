@@ -55,7 +55,7 @@ import contextlib
 from telethon.errors import SessionPasswordNeededError
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Coroutine, List, Tuple, Union
+from typing import Any, Awaitable, Callable, Coroutine, List, Tuple, Union
 from telethon.events import NewMessage, MessageDeleted
 from telethon.hints import Entity, MessageLike
 from telethon.tl.types import Message, PeerChannel, PeerChat, PeerUser
@@ -81,12 +81,12 @@ from distutils.util import strtobool
 
 from packages.helpers import build_telegram_peer, format_default_message_text, format_default_unknown_message_text
 
-async def add_event_handlers(client : TelegramClient, sqlalchemy_session_maker : sessionmaker, notify_message_deletion : Coroutine[TelegramMessage, TelegramClient, Any], notify_unknown_message : Coroutine[List[int], MessageDeleted.Event, TelegramClient, Any]):
+async def add_event_handlers(client : TelegramClient, sqlalchemy_session_maker : sessionmaker, notify_message_deletion : Callable[[TelegramMessage, TelegramClient], Awaitable[Any]], notify_unknown_message : Callable[[List[int], MessageDeleted.Event, TelegramClient], Awaitable[Any]]):
     new_message_event = events.NewMessage(incoming=True, outgoing=bool(strtobool(os.getenv('NOTIFY_OUTGOING_MESSAGES', 'True'))))
     client.add_event_handler(get_on_new_message(sqlalchemy_session_maker=sqlalchemy_session_maker, client=client), new_message_event)
     client.add_event_handler(get_on_message_deleted(client=client, sqlalchemy_session_maker=sqlalchemy_session_maker, notify_message_deletion=notify_message_deletion, notify_unknown_message=notify_unknown_message), events.MessageDeleted())
 
-def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : sessionmaker, notify_message_deletion : Coroutine[TelegramMessage, TelegramClient, Any], notify_unknown_message : Coroutine[List[int], MessageDeleted.Event, TelegramClient, Any]):
+def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : sessionmaker, notify_message_deletion : Callable[[TelegramMessage, TelegramClient], Awaitable[Any]], notify_unknown_message : Callable[[List[int], MessageDeleted.Event, TelegramClient], Awaitable[Any]]):
 
     async def on_message_deleted(event: MessageDeleted.Event):
 
@@ -187,7 +187,7 @@ async def clean_old_messages_loop(sqlalchemy_session_maker : sessionmaker, secon
         if stop_event.is_set():
             break
 
-def get_base_notify_message_deletion(sqlalchemy_session_maker : sessionmaker) -> Coroutine[TelegramMessage, TelegramClient, Any]:
+def get_base_notify_message_deletion(sqlalchemy_session_maker : sessionmaker) -> Callable[[TelegramMessage, TelegramClient], Awaitable[Any]]:
     async def base_notify_message_deletion(message : TelegramMessage, client : TelegramClient):
         logging.debug("base_notify_message_deletion")
         with sqlalchemy_session_maker() as session:
@@ -196,7 +196,7 @@ def get_base_notify_message_deletion(sqlalchemy_session_maker : sessionmaker) ->
                 session.commit()
     return base_notify_message_deletion
 
-def get_default_notify_message_deletion() -> Coroutine[TelegramMessage, TelegramClient, Any]:
+def get_default_notify_message_deletion() -> Callable[[TelegramMessage, TelegramClient], Awaitable[Any]]:
     async def default_notify_message_deletion(message : TelegramMessage, client: TelegramClient):
         logging.debug("default_notify_message_deletion")
         await client.send_message(
@@ -206,7 +206,7 @@ def get_default_notify_message_deletion() -> Coroutine[TelegramMessage, Telegram
         )
     return default_notify_message_deletion
 
-def get_default_notify_unknown_message() -> Coroutine[List[int], MessageDeleted.Event, TelegramClient, Any]:
+def get_default_notify_unknown_message() -> Callable[[List[int], MessageDeleted.Event, TelegramClient], Awaitable[Any]]:
     async def default_notify_unknown_message(message_ids : List[int], event : MessageDeleted.Event, client: TelegramClient):
         logging.debug("default_notify_unknown_message")
         await client.send_message(

@@ -79,19 +79,19 @@ from asyncio.tasks import Task
 
 from distutils.util import strtobool
 
-from packages.helpers import build_telegram_peer, format_default_message_text
+from packages.helpers import build_telegram_peer, format_default_message_text, format_default_unknown_message_text
 
-async def add_event_handlers(client : TelegramClient, sqlalchemy_session_maker : sessionmaker, notify_message_deletion : Coroutine[TelegramMessage, TelegramClient, Any]):
+async def add_event_handlers(client : TelegramClient, sqlalchemy_session_maker : sessionmaker, notify_message_deletion : Coroutine[TelegramMessage, TelegramClient, Any], notify_unknown_message : Coroutine[List[int], MessageDeleted.Event, TelegramClient, Any]):
     new_message_event = events.NewMessage(incoming=True, outgoing=bool(strtobool(os.getenv('NOTIFY_OUTGOING_MESSAGES', 'True'))))
     client.add_event_handler(get_on_new_message(sqlalchemy_session_maker=sqlalchemy_session_maker, client=client), new_message_event)
-    client.add_event_handler(get_on_message_deleted(client=client, sqlalchemy_session_maker=sqlalchemy_session_maker, notify_message_deletion=notify_message_deletion), events.MessageDeleted())
+    client.add_event_handler(get_on_message_deleted(client=client, sqlalchemy_session_maker=sqlalchemy_session_maker, notify_message_deletion=notify_message_deletion, notify_unknown_message=notify_unknown_message), events.MessageDeleted())
 
-def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : sessionmaker, notify_message_deletion : Coroutine[TelegramMessage, TelegramClient, Any]):
+def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : sessionmaker, notify_message_deletion : Coroutine[TelegramMessage, TelegramClient, Any], notify_unknown_message : Coroutine[List[int], MessageDeleted.Event, TelegramClient, Any]):
 
     async def on_message_deleted(event: MessageDeleted.Event):
 
         with sqlalchemy_session_maker() as sqlalchemy_session:
-            (messages, query) = await load_messages_from_event(event, sqlalchemy_session)
+            (messages, query, unloaded_messages) = await load_messages_from_event(event, sqlalchemy_session)
             sqlalchemy_session.commit()
 
         deleted_messages_count = len(event.deleted_ids)
@@ -128,6 +128,8 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
         proms : List[Task[Message]] = []
         for message in messages:
             proms.append(client.loop.create_task(notify_message_deletion(message, client)))
+        for unknown_message in unloaded_messages:
+            proms.append(client.loop.create_task(notify_unknown_message(unknown_message, event, client)))
         if proms:
             await asyncio.gather(*proms)
 
@@ -164,7 +166,8 @@ async def load_messages_from_event(event: MessageDeleted.Event, sqlalchemy_sessi
     if peer_type is not None:
         the_query = the_query.where(TelegramMessage.chat_peer.has(TelegramPeer.type == peer_type))
     db_results = sqlalchemy_session.execute(the_query).scalars().all()
-    return (db_results, the_query)
+    unloaded_messages = map(lambda x: x.id, db_results)
+    return (db_results, the_query, unloaded_messages)
 
 async def clean_old_messages_loop(sqlalchemy_session_maker : sessionmaker, seconds_interval : int, ttl : timedelta, stop_event : asyncio.Event):
     logging.debug('Starting Clean Old Messages Loop')
@@ -202,6 +205,15 @@ def get_default_notify_message_deletion() -> Coroutine[TelegramMessage, Telegram
             file=message.media
         )
     return default_notify_message_deletion
+
+def get_default_notify_unknown_message() -> Coroutine[List[int], MessageDeleted.Event, TelegramClient, Any]:
+    async def default_notify_unknown_message(message_ids : List[int], event : MessageDeleted.Event, client: TelegramClient):
+        logging.debug("default_notify_unknown_message")
+        await client.send_message(
+            entity="me",
+            message=await format_default_unknown_message_text(client, message_ids, event)
+        )
+    return default_notify_unknown_message
 
 def ask_exit(signame, loop : BaseEventLoop, additional):
     logging.warning("got signal %s: exiting" % signame)
@@ -280,6 +292,7 @@ async def main():
     session_id = require_env("SESSION_ID")
 
     configured_notify_message_deletion = None
+    configured_notify_unknown_message = None
     if telegram_bot_token is not None:
         if target_chat is None or target_chat == "me":
             logging.critical('Must provide TARGET_CHAT (except "me") if you want to use bot assistant!')
@@ -294,6 +307,7 @@ async def main():
         )
         await bot.__aenter__()
         configured_notify_message_deletion = bot.notify_message_deletion
+        configured_notify_unknown_message = bot.notify_unknown_message
 
     telegram_session = alchemy_telegram_container.new_session(session_id)
 
@@ -354,12 +368,14 @@ async def main():
         logging.debug('Inside With Client')
         if not configured_notify_message_deletion:
             configured_notify_message_deletion = get_default_notify_message_deletion()
+        if not configured_notify_unknown_message:
+            configured_notify_unknown_message = get_default_notify_unknown_message()
         base_notify_message_deletion = get_base_notify_message_deletion(sqlalchemy_session_maker=sqlalchemy_session_maker)
         async def actual_notify_message_deletion(message : TelegramMessage, client : TelegramClient):
             await base_notify_message_deletion(message, client)
             await configured_notify_message_deletion(message, client)
         logging.debug('Adding event handlers')
-        await add_event_handlers(client, sqlalchemy_session_maker, actual_notify_message_deletion)
+        await add_event_handlers(client, sqlalchemy_session_maker, actual_notify_message_deletion, configured_notify_unknown_message)
         logging.debug('Added event handlers')
         await clean_old_messages_loop(
             sqlalchemy_session_maker=sqlalchemy_session_maker,

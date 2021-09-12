@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 
 import logging
-from typing import Callable, Union
+from typing import Callable, List, Union
 from telethon import TelegramClient, hints
 from telethon.errors.rpcerrorlist import AuthKeyDuplicatedError
+from telethon.events.messagedeleted import MessageDeleted
 from telethon.sessions.abstract import Session
-from packages.helpers import format_default_message_text
+from packages.helpers import format_default_message_text, format_default_unknown_message_text
 
 from packages.models.root.TelegramMessage import TelegramMessage
 
@@ -32,18 +33,29 @@ class BotAssistant():
             await self.client.sign_in(bot_token=self.bot_token)
 
     async def __aexit__(self, *args):
-        if(not self.client):
-            raise RuntimeError("Not started!")
+        self.throw_if_uninitialized()
         await self.client.__aexit__(*args)
         self.client = None
 
     async def notify_message_deletion(self, message : TelegramMessage, client: TelegramClient):
         logging.debug("bot_assistant notify_message_deletion")
-        if(not self.client):
-            raise RuntimeError("Not started!")
+        self.throw_if_uninitialized()
         logging.debug("bot_assistant notify_message_deletion send_message")
         await self.client.send_message(
             entity=self.target_chat,
             message=await format_default_message_text(client, message),
             file=message.media
-        ) 
+        )
+    
+    async def notify_unknown_message(self, message_ids : List[int], event : MessageDeleted.Event, client: TelegramClient):
+        logging.debug("bot_assistant notify_unknown_message")
+        self.throw_if_uninitialized()
+        logging.debug("bot_assistant notify_unknown_message send_message")
+        await self.client.send_message(
+            entity=self.target_chat,
+            message=await format_default_unknown_message_text(client, message_ids, event)
+        )
+    
+    def throw_if_uninitialized(self):
+        if(not self.client):
+            raise RuntimeError("Not started!")

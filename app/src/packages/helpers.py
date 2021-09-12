@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 
-from typing import Union
+from typing import List, Union
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import select
 import telethon
 from telethon.client.telegramclient import TelegramClient
+from telethon.events.messagedeleted import MessageDeleted
 from telethon.tl.types import InputPeerChannel, InputPeerChat, InputPeerUser, PeerChannel, PeerChat, PeerUser
 from packages.models.root.TelegramMessage import TelegramMessage
 from packages.models.root.TelegramPeer import TelegramPeer
@@ -74,4 +75,20 @@ async def format_default_message_text(client : TelegramClient, message : Telegra
     )
     if message.text:
         text += "**Message Text:** " + message.text
+    return text
+
+async def format_default_unknown_message_text(client : TelegramClient, message_ids : List[int], event : MessageDeleted.Event, tried : bool = False):
+    try:
+        chat = await client.get_entity(event.get_input_chat())
+    except ValueError:
+        if tried:
+            raise
+        refresh_client(client)
+        return format_default_unknown_message_text(client=client, message_ids=message_ids, event=event, tried=True)
+    mention_chatname = await get_mention_username(chat)
+    text = "**Unknown deleted messages on chat [{chatname}](tg://user?id={chatid})\n".format(
+        chatname=mention_chatname,
+        chatid=(str(chat.id) if chat else "0"),
+    )
+    text += "**Message IDs (" + str(len(message_ids)) + " total):** " + ', '.join(str(x) for x in message_ids)
     return text

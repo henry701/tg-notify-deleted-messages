@@ -325,6 +325,8 @@ class StringEncryptedType(TypeDecorator, ScalarCoercible):
 
     """
 
+    cache_ok = True
+
     impl = String
 
     def __init__(self, type_in=None, key=None,

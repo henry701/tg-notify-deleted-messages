@@ -67,7 +67,7 @@ async def format_default_message_text(client : TelegramClient, message : Telegra
         return format_default_message_text(client=client, message=message, tried=True)
     mention_username = await get_mention_username(user)
     mention_chatname = await get_mention_username(chat)
-    text = "**Deleted message from: **[{username}](tg://user?id={userid}) on chat [{chatname}](tg://chat?id={chatid})\n".format(
+    text = "**Deleted message** from: [{username}](tg://user?id={userid}) on chat [{chatname}](tg://chat?id={chatid})\n".format(
         username=mention_username,
         userid=(str(user.id) if user else "0"),
         chatname=mention_chatname,
@@ -87,7 +87,7 @@ async def format_default_unknown_message_text(client : TelegramClient, message_i
         refresh_client(client)
         return format_default_unknown_message_text(client=client, message_ids=message_ids, event=event, tried=True)
     mention_chatname = await get_mention_username(chat)
-    text = "**Unknown deleted messages on chat [{chatname}](tg://user?id={chatid})\n".format(
+    text = "**Unknown deleted messages** on chat [{chatname}](tg://user?id={chatid})\n".format(
         chatname=mention_chatname,
         chatid=(str(chat.id) if chat else "0"),
     )

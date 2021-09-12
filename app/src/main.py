@@ -91,7 +91,7 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
     async def on_message_deleted(event: MessageDeleted.Event):
 
         with sqlalchemy_session_maker() as sqlalchemy_session:
-            (messages, query, unloaded_messages) = await load_messages_from_event(event, sqlalchemy_session)
+            (messages, query, unloaded_ids) = await load_messages_from_event(event, sqlalchemy_session)
             sqlalchemy_session.commit()
 
         deleted_messages_count = len(event.deleted_ids)
@@ -128,8 +128,8 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
         proms : List[Task[Message]] = []
         for message in messages:
             proms.append(client.loop.create_task(notify_message_deletion(message, client)))
-        for unknown_message in unloaded_messages:
-            proms.append(client.loop.create_task(notify_unknown_message(unknown_message, event, client)))
+        if unloaded_ids and len(unloaded_ids):
+            proms.append(client.loop.create_task(notify_unknown_message(unloaded_ids, event, client)))
         if proms:
             await asyncio.gather(*proms)
 
@@ -166,8 +166,9 @@ async def load_messages_from_event(event: MessageDeleted.Event, sqlalchemy_sessi
     if peer_type is not None:
         the_query = the_query.where(TelegramMessage.chat_peer.has(TelegramPeer.type == peer_type))
     db_results = sqlalchemy_session.execute(the_query).scalars().all()
-    unloaded_messages = map(lambda x: x.id, db_results)
-    return (db_results, the_query, unloaded_messages)
+    loaded_ids = map(lambda x: x.id, db_results)
+    unloaded_ids = [msg_id for msg_id in event.deleted_ids if msg_id not in loaded_ids]
+    return (db_results, the_query, unloaded_ids)
 
 async def clean_old_messages_loop(sqlalchemy_session_maker : sessionmaker, seconds_interval : int, ttl : timedelta, stop_event : asyncio.Event):
     logging.debug('Starting Clean Old Messages Loop')

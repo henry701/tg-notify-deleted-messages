@@ -79,7 +79,7 @@ async def format_default_message_text(client : TelegramClient, message : Telegra
 
 async def format_default_unknown_message_text(client : TelegramClient, message_ids : List[int], event : MessageDeleted.Event, tried : bool = False):
     try:
-        chat = await client.get_entity(event.get_input_chat())
+        chat = await client.get_entity(await event.get_input_chat())
     except ValueError:
         if tried:
             raise

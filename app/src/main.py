@@ -113,7 +113,7 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
                     "Got {deleted_messages_count} deleted messages but only found {db_messages_count} in database! Query: {query_str}".format(
                         deleted_messages_count=deleted_messages_count_str,
                         db_messages_count=db_messages_count_str,
-                        query_str=str(query.compile())
+                        query_str=str(query.compile(compile_kwargs={'literal_binds': True}))
                     )
                 )
             except Exception as e:

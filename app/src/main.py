@@ -157,14 +157,16 @@ def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : Telegra
             sqlalchemy_session.commit()
     return on_new_message
 
-async def load_messages_from_event(event: MessageDeleted.Event, sqlalchemy_session : Session) -> Tuple[List[TelegramMessage], Select]:
+async def load_messages_from_event(event: MessageDeleted.Event, sqlalchemy_session : Session) -> Tuple[List[TelegramMessage], Select, List[int]]:
     logging.debug(f"Searching for messages in {event.deleted_ids}")
-    peer_type = PeerType.from_type(type(await event.get_input_chat()))
+    input_chat = await event.get_input_chat()
+    chat_peer_type = PeerType.from_type(type(input_chat))
+    input_chat_id = event.chat_id
     the_query = select(TelegramMessage).where(TelegramMessage.id.in_(event.deleted_ids))
-    if event.chat_id is not None:
-        the_query = the_query.where(or_(TelegramMessage.chat_peer.has(TelegramPeer.peer_id == event.chat_id), TelegramMessage.from_peer.has(TelegramPeer.peer_id == event.chat_id)))
-    if peer_type is not None:
-        the_query = the_query.where(TelegramMessage.chat_peer.has(TelegramPeer.type == peer_type))
+    if input_chat_id is not None:
+        the_query = the_query.where(TelegramMessage.chat_peer.has(TelegramPeer.peer_id == input_chat_id))
+    if chat_peer_type is not None:
+        the_query = the_query.where(TelegramMessage.chat_peer.has(TelegramPeer.type == chat_peer_type))
     db_results = sqlalchemy_session.execute(the_query).scalars().all()
     loaded_ids = map(lambda x: x.id, db_results)
     unloaded_ids = [msg_id for msg_id in event.deleted_ids if msg_id not in loaded_ids]

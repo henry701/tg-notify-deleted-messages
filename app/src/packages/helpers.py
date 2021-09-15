@@ -3,7 +3,6 @@
 from typing import List, Union
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import select
-import telethon
 from telethon.client.telegramclient import TelegramClient
 from telethon.events.messagedeleted import MessageDeleted
 from telethon.tl.types import InputPeerChannel, InputPeerChat, InputPeerUser, PeerChannel, PeerChat, PeerUser
@@ -11,19 +10,25 @@ from packages.models.root.TelegramMessage import TelegramMessage
 from packages.models.root.TelegramPeer import TelegramPeer
 from packages.models.support.PeerType import PeerType
 
-async def get_mention_username(user):
-    if not user:
-        return "Anonymous"
-    if user.first_name or user.last_name:
+async def get_mention_text(entity):
+    if not entity:
+        mention_username = "Anonymous"
+    elif getattr(entity, 'title', None):
+        mention_username = entity.title
+    elif getattr(entity, 'first_name', None) or getattr(entity, 'last_name', None):
         mention_username = \
-            (user.first_name + " " if user.first_name else "") + \
-            (user.last_name if user.last_name else "")
-    elif user.username:
-        mention_username = user.username
-    elif user.phone:
-        mention_username = user.phone
+            (getattr(entity, 'first_name', None) + " " if getattr(entity, 'first_name', None) else "") + \
+            (getattr(entity, 'last_name', None) if getattr(entity, 'last_name', None) else "")
+    elif getattr(entity, 'username', None):
+        mention_username = entity.username
+    elif getattr(entity, 'phone', None):
+        mention_username = entity.phone
     else:
-        mention_username = user.id
+        mention_username = getattr(entity, 'id', None)
+        if not mention_username:
+            mention_username = getattr(entity, 'chat_id', None)
+    if not mention_username:
+        mention_username = "UNKNOWN. Type name: " + type(entity).__name__
     return mention_username
 
 async def build_telegram_peer(peer : Union[PeerUser, PeerChat, PeerChannel, None], client : TelegramClient, sqlalchemy_session : Session) -> TelegramPeer:
@@ -59,14 +64,14 @@ async def refresh_client(client : TelegramClient):
 async def format_default_message_text(client : TelegramClient, message : TelegramMessage, tried : bool = False):
     try:
         user = await client.get_entity(to_telethon_input_peer(message.from_peer)) if message.from_peer else None
-        chat = await client.get_entity(to_telethon_input_peer(message.chat_peer))
+        chat = await client.get_entity(to_telethon_input_peer(message.chat_peer)) if message.chat_peer else None
     except ValueError:
         if tried:
             raise
         refresh_client(client)
         return format_default_message_text(client=client, message=message, tried=True)
-    mention_username = await get_mention_username(user)
-    mention_chatname = await get_mention_username(chat)
+    mention_username = await get_mention_text(user)
+    mention_chatname = await get_mention_text(chat)
     text = "**Deleted message** from: [{username}](tg://user?id={userid}) on chat [{chatname}](tg://chat?id={chatid})\n".format(
         username=mention_username,
         userid=(str(user.id) if user else "0"),
@@ -86,7 +91,7 @@ async def format_default_unknown_message_text(client : TelegramClient, message_i
             raise
         refresh_client(client)
         return format_default_unknown_message_text(client=client, message_ids=message_ids, event=event, tried=True)
-    mention_chatname = await get_mention_username(chat)
+    mention_chatname = await get_mention_text(chat)
     text = "**Unknown deleted messages** on chat [{chatname}](tg://user?id={chatid})\n".format(
         chatname=mention_chatname,
         chatid=(str(chat.id) if chat else "0"),

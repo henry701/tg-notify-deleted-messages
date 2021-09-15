@@ -32,7 +32,7 @@ class PeerType(IntEnum):
         if self == PeerType.CHAT:
             return InputPeerChat(id)
         if self == PeerType.ENCRYPTED_CHAT:
-            return InputPeerChat(id, access_hash)
+            return InputEncryptedChat(id, access_hash)
         if mandatory:
             raise ValueError(f"Unable to get InputPeer from PeerType: {self}")
         return None

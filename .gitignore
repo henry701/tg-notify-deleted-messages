@@ -3,6 +3,7 @@
 # Exceptions to hidden metafolders and metafiles
 !.github
 !.gitignore
+!.dockerignore
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

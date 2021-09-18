@@ -1,0 +1,8 @@
+# Ignore everything else
+**
+
+# Allow Dockerfile
+!Dockerfile
+
+# Allow App Folder
+!app/**

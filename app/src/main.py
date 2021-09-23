@@ -11,6 +11,7 @@ import time
 
 from sqlalchemy.sql.selectable import Select
 from telethon.errors.rpcerrorlist import AuthKeyDuplicatedError
+from telethon.utils import resolve_id
 
 from packages.env_helpers import load_env, require_env
 
@@ -161,7 +162,7 @@ async def load_messages_from_event(event: MessageDeleted.Event, sqlalchemy_sessi
     logging.debug(f"Searching for messages in {event.deleted_ids}")
     input_chat = await event.get_input_chat()
     chat_peer_type = PeerType.from_type(type(input_chat))
-    input_chat_id = event.chat_id
+    input_chat_id = resolve_id(event.chat_id)
     the_query = select(TelegramMessage).where(TelegramMessage.id.in_(event.deleted_ids))
     if input_chat_id is not None:
         the_query = the_query.where(TelegramMessage.chat_peer.has(TelegramPeer.peer_id == input_chat_id))

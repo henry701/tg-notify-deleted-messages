@@ -9,11 +9,12 @@ services:
     container_name: tg-notify-deleted-messages-app
     stdin_open: true
     tty: true
-    environment: 
+    environment:
       # DATABASE_URL: postgres://postgres:postgres@localhost/postgres
       DATABASE_URL: sqlite:///file:/usr/app/state/db.sqlite3?uri=true
-    ports: 
-      - "443"
+      PORT: 8085
+    ports:
+      - "8085"
     volumes: 
       - "./app/state:/usr/app/state"
   #db:

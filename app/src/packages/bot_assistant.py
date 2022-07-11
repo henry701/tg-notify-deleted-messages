@@ -6,7 +6,7 @@ from telethon import TelegramClient, hints
 from telethon.errors.rpcerrorlist import AuthKeyDuplicatedError
 from telethon.events.messagedeleted import MessageDeleted
 from telethon.sessions.abstract import Session
-from packages.helpers import format_default_message_text, format_default_unknown_message_text
+from packages.telegram_helpers import format_default_message_text, format_default_unknown_message_text
 
 from packages.models.root.TelegramMessage import TelegramMessage
 

@@ -53,4 +53,4 @@ FROM lean as runner
 WORKDIR /usr/app/src
 ENV PORT=443
 EXPOSE "$PORT"
-ENTRYPOINT ["./main.py"]
+ENTRYPOINT python3 -m gunicorn --bind 0.0.0.0:$PORT wsgi:app

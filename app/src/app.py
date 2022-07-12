@@ -65,9 +65,8 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
 
     async def on_message_deleted(event: MessageDeleted.Event):
 
-        with sqlalchemy_session_maker() as sqlalchemy_session:
+        with sqlalchemy_session_maker.begin() as sqlalchemy_session:
             (messages, query, unloaded_ids) = await load_messages_from_event(event, sqlalchemy_session)
-            sqlalchemy_session.commit()
 
         deleted_messages_count = len(event.deleted_ids)
         deleted_messages_count_str = str(deleted_messages_count)
@@ -100,13 +99,13 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
                     )
                 )
 
-        proms : List[Task[Message]] = []
+        futures : List[concurrent.futures.Future[Message]] = []
         for message in messages:
-            proms.append(asyncio.run_coroutine_threadsafe(notify_message_deletion(message, client), client.loop))
+            futures.append(asyncio.run_coroutine_threadsafe(notify_message_deletion(message, client), client.loop))
         if unloaded_ids and len(unloaded_ids):
-            proms.append(asyncio.run_coroutine_threadsafe(notify_unknown_message(unloaded_ids, event, client), client.loop))
-        if proms:
-            await asyncio.gather(*proms)
+            futures.append(asyncio.run_coroutine_threadsafe(notify_unknown_message(unloaded_ids, event, client), client.loop))
+        if futures.count() > 0:
+            await asyncio.gather(*futures)
 
     return on_message_deleted
 
@@ -118,7 +117,7 @@ def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : Telegra
         await event.get_input_sender()
         await event.get_input_chat()
         logging.debug("END cache lib telethon bad")
-        with sqlalchemy_session_maker() as sqlalchemy_session:
+        with sqlalchemy_session_maker.begin() as sqlalchemy_session:
             message : telethon.tl.custom.message.Message = event.message
             orm_message = TelegramMessage(
                 id = message.id,
@@ -129,7 +128,6 @@ def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : Telegra
                 timestamp = message.date
             )
             sqlalchemy_session.add(orm_message)
-            sqlalchemy_session.commit()
     return on_new_message
 
 async def load_messages_from_event(event: MessageDeleted.Event, sqlalchemy_session : Session) -> Tuple[List[TelegramMessage], Select, List[int]]:
@@ -151,12 +149,11 @@ async def clean_old_messages_loop(sqlalchemy_session_maker : sessionmaker, secon
     logging.debug('Starting Clean Old Messages Loop')
     while True:
         delete_from_time = datetime.now(tz=timezone.utc) - ttl
-        with sqlalchemy_session_maker() as sqlalchemy_session:
+        with sqlalchemy_session_maker.begin() as sqlalchemy_session:
             res = sqlalchemy_session.execute(
                 delete(TelegramMessage).where(TelegramMessage.timestamp < delete_from_time)
             )
-            sqlalchemy_session.commit()
-            count = res.rowcount
+        count = res.rowcount
         logging.info(
             f"Deleted {str(count)} messages older than {str(delete_from_time)} from DB. Sleeping for {seconds_interval} seconds..."
         )
@@ -169,10 +166,9 @@ async def clean_old_messages_loop(sqlalchemy_session_maker : sessionmaker, secon
 def get_base_notify_message_deletion(sqlalchemy_session_maker : sessionmaker) -> Callable[[TelegramMessage, TelegramClient], Awaitable[Any]]:
     async def base_notify_message_deletion(message : TelegramMessage, client : TelegramClient):
         logging.debug("base_notify_message_deletion")
-        with sqlalchemy_session_maker() as session:
+        with sqlalchemy_session_maker.begin() as session:
                 session.add(message)
                 message.deleted = True
-                session.commit()
     return base_notify_message_deletion
 
 def get_default_notify_message_deletion() -> Callable[[TelegramMessage, TelegramClient], Awaitable[Any]]:
@@ -209,7 +205,8 @@ def ask_exit(signame, loop : BaseEventLoop, additional):
         task.cancel()
     logging.warning("cancelled all tasks")
 
-async def make_client(alchemy_telegram_container, telegram_api_id, telegram_api_hash, session_id, telegram_session, loop : BaseEventLoop):
+async def make_client(alchemy_telegram_container : AlchemySessionContainer, telegram_api_id, telegram_api_hash, session_id, loop : BaseEventLoop):
+    telegram_session = alchemy_telegram_container.new_session(session_id)
     client = TelegramClient(session=telegram_session, api_id=telegram_api_id, api_hash=telegram_api_hash, loop=loop)
     logging.info('Connecting Telegram Client')
     try:
@@ -254,8 +251,6 @@ async def configure_bot(alchemy_telegram_container, telegram_api_id, telegram_ap
     return configured_notify_message_deletion,configured_notify_unknown_message,bot
 
 async def client_main_loop_job(stop_event, sqlalchemy_session_maker, configured_notify_message_deletion, configured_notify_unknown_message, client):
-    logging.debug('Before With Client')
-    logging.debug('Inside With Client')
     if not configured_notify_message_deletion:
         configured_notify_message_deletion = get_default_notify_message_deletion()
     if not configured_notify_unknown_message:
@@ -273,7 +268,6 @@ async def client_main_loop_job(stop_event, sqlalchemy_session_maker, configured_
         ttl=timedelta(days=int(os.getenv('MESSAGES_TTL_DAYS', 14))),
         stop_event=stop_event
     )
-    logging.debug('Client is exiting scope')
 
 def create_app_and_start_jobs():
 
@@ -282,18 +276,15 @@ def create_app_and_start_jobs():
 
     stop_event = asyncio.Event()
 
-    client = None
-    bot = None
-    executor = None
+    client : TelegramClient = None
+    bot : BotAssistant = None
 
     async def closer():
         stop_event.set()
         if client:
-            await client.__aexit__(None, None, None)
+            await client.disconnect()
         if bot:
             await bot.__aexit__(None, None, None)
-        if executor:
-            executor.shutdown(cancel_futures=True, wait=False)
         count = 0
         while asyncio.all_tasks(loop) and count < 10:
             await asyncio.sleep(1)
@@ -316,16 +307,14 @@ def create_app_and_start_jobs():
 
     telegram_api_id = require_env("TELEGRAM_API_ID")
     telegram_api_hash = require_env("TELEGRAM_API_HASH")
-    
+
     target_chat = os.getenv("TARGET_CHAT", "me")
 
     session_id = require_env("SESSION_ID")
 
     configured_notify_message_deletion, configured_notify_unknown_message, bot = loop.run_until_complete(configure_bot(alchemy_telegram_container, telegram_api_id, telegram_api_hash, target_chat, session_id))
 
-    telegram_session = alchemy_telegram_container.new_session(session_id)
-
-    client = loop.run_until_complete(make_client(alchemy_telegram_container, telegram_api_id, telegram_api_hash, session_id, telegram_session, loop))
+    client = loop.run_until_complete(make_client(alchemy_telegram_container, telegram_api_id, telegram_api_hash, session_id, loop))
 
     def worker_function(loop : BaseEventLoop):
         logging.info("Entering worker function!")
@@ -340,44 +329,73 @@ def create_app_and_start_jobs():
         loop
     )
 
-    flask_app = create_app(client, loop)
+    flask_app = create_app(client, bot, loop)
 
     logging.info("Returning from create_app_and_start_jobs")
     return (flask_app, sync_closer)
 
-def create_app(client, loop : asyncio.AbstractEventLoop):
+def create_app(client : TelegramClient, bot : BotAssistant, loop : asyncio.AbstractEventLoop) -> flask.Flask:
+
     flask_app = flask.Flask(__name__)
 
-    port = int(require_env("PORT"))
-    host = os.getenv("HOST", "<host>")
-    use_https = bool(strtobool(os.getenv("USE_HTTPS", "0")))
-    use_external_port = bool(strtobool(os.getenv("USE_EXTERNAL_PORT", "0")))
     phone = require_env("PHONE_NUMBER")
+
+    sent_code : telethon.types.auth.SentCode = None
+
+    add_informative_routes(client, bot, flask_app, loop)
 
     @flask_app.route('/send_code', methods=['GET'])
     def send_code():
         logging.info('Sending code request')
-        asyncio.run_coroutine_threadsafe(client.send_code_request(phone=phone), loop).result()
+        nonlocal sent_code
+        sent_code = asyncio.run_coroutine_threadsafe(client.send_code_request(phone=phone), loop).result()
         logging.info('Sent code request')
-        logging.info(f"To continue, send GET request to following URL: http{'s' if use_https else ''}://{host}{f':{port}' if use_external_port else ''}/auth?code=<code here>&password=<2fa pass if enabled>")
         return flask.Response(status=204)
-    
+
     @flask_app.route('/auth', methods=['GET'])
     def auth():
         logging.info('Auth request received')
         code = flask.request.args.get("code")
         password = flask.request.args.get("password")
+        if not sent_code:
+            return flask.Response({"message": "Missing send_code request"}, status=401)
         if not code:
-            return flask.Response(status=403)
+            return flask.Response({"message": "Missing code queryParameter"}, status=403)
         try:
             logging.info('Attempting to sign in')
-            if asyncio.run_coroutine_threadsafe(client.sign_in(phone=phone, code=code, password=password), loop).result():
+            if asyncio.run_coroutine_threadsafe(client.sign_in(phone_code_hash=sent_code.phone_code_hash, phone=phone, code=code, password=password), loop).result():
                 return flask.Response(status=204)
             return flask.Response(status=403)
+        except (telethon.errors.rpcerrorlist.AuthKeyUnregisteredError, telethon.errors.rpcerrorlist.AuthKeyDuplicatedError):
+            return flask.Response({"message": "Missing new send_code request. Unregistered or duplicate!"}, status=401)
         except SessionPasswordNeededError:
-            return flask.Response(status=401)
+            return flask.Response({"message": "Password needed!"}, status=401)
 
     return flask_app
+
+def add_informative_routes(client : TelegramClient, bot : BotAssistant, flask_app : flask.Flask, loop : asyncio.AbstractEventLoop):
+
+    @flask_app.route('/is_bot_connected', methods=['GET'])
+    def is_bot_connected():
+        return flask.Response(str(bot is not None and bot.client is not None and bot.client.is_connected()), status=200)
+
+    @flask_app.route('/is_connected', methods=['GET'])
+    def is_connected():
+        return flask.Response(str(client.is_connected()), status=200)
+    
+    @flask_app.route('/is_bot_authorized', methods=['GET'])
+    def is_bot_authorized():
+        return flask.Response(str(bot is not None and bot.client is not None and asyncio.run_coroutine_threadsafe(bot.client.is_user_authorized(), loop).result()), status=200)
+
+    @flask_app.route('/is_authorized', methods=['GET'])
+    def is_authorized():
+        return flask.Response(str(asyncio.run_coroutine_threadsafe(client.is_user_authorized(), loop).result()), status=200)
+
+    @flask_app.route('/save_sessions', methods=['GET'])
+    def save_sessions():
+        client.session.save()
+        bot.client.session.save()
+        return flask.Response(status=204)
 
 def main():
     app, closer = create_app_and_start_jobs()

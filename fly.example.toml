@@ -1,0 +1,78 @@
+app = "tg-notify-deleted-messages"
+
+kill_signal = "SIGINT"
+kill_timeout = 30
+processes = []
+
+[env]
+
+# Initial Sleep period for preventing concurrent usage (kludge, update on cloud)
+SLEEP_INIT_SECONDS = "10"
+
+# Use HTTP or HTTPS for external communication
+USE_HTTPS = "0"
+# Instruct access via external port, or always use port 80 (presume routing)
+USE_EXTERNAL_PORT = "1"
+# Manually inject PORT variable since this is not Heroku
+PORT = "8080"
+
+# Logging levels, available values: https://docs.python.org/3/library/logging.html#levels
+DEFAULT_LOGGING_LEVEL = "INFO"
+ROOT_LOGGING_LEVEL = "INFO"
+SQLALCHEMY_LOGGING_LEVEL = "INFO"
+
+# How many days messages will be stored in the database
+# Warning: Database is not currently constrained by space, you need to monitor your free disk space manually!
+MESSAGES_TTL_DAYS = "90"
+
+# Polling interval to clean messages away
+CLEAN_OLD_MESSAGES_SECONDS_INTERVAL = "900"
+
+[experimental]
+allowed_public_ports = []
+auto_rollback = true
+
+[build]
+dockerfile = "./Dockerfile"
+build-target = "runner"
+
+[deploy]
+# To avoid telegram seeing two concurrent clients
+strategy = "immediate"
+
+[[services]]
+internal_port = 8080
+processes = ["app"]
+protocol = "tcp"
+script_checks = []
+
+[services.concurrency]
+# No credit card if I get DDoS'd, please
+hard_limit = 9999999
+soft_limit = 9999999
+type = "connections"
+
+[[services.ports]]
+handlers = ["http"]
+port = 80
+
+[[services.ports]]
+handlers = ["tls", "http"]
+port = 443
+
+[[services.tcp_checks]]
+grace_period = "30s"
+interval = "60s"
+restart_limit = 5
+timeout = "5s"
+
+# To avoid SQLALchemy stuck sessions and triple as http validator and session saver
+[[services.http_checks]]
+interval = "30s"
+grace_period = "35s"
+method = "get"
+path = "/save_sessions"
+protocol = "http"
+restart_limit = 2
+timeout = "5s"
+tls_skip_verify = false

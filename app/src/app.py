@@ -299,6 +299,7 @@ def create_app_and_start_jobs():
 
     old_sqlalchemy_engine = sqlalchemy.create_engine(database_url, echo=False, future=False)
     alchemy_telegram_container = AlchemySessionContainer(engine = old_sqlalchemy_engine, table_base=Base, manage_tables=False, table_prefix=os.getenv("SESSION_TABLE_PREFIX", 'thon_'))
+    alchemy_telegram_container.core_mode = True
 
     sqlalchemy_engine = sqlalchemy.create_engine(database_url, echo=False, future=True)
     sqlalchemy_session_maker = sessionmaker(bind=sqlalchemy_engine, future=True, expire_on_commit=False)

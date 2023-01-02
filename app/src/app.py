@@ -104,7 +104,7 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
             futures.append(asyncio.run_coroutine_threadsafe(notify_message_deletion(message, client), client.loop))
         if unloaded_ids and len(unloaded_ids):
             futures.append(asyncio.run_coroutine_threadsafe(notify_unknown_message(unloaded_ids, event, client), client.loop))
-        if futures.count() > 0:
+        if len(futures) > 0:
             await asyncio.gather(*futures)
 
     return on_message_deleted

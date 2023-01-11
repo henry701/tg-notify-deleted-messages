@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import os
+from typing import Type
 import sqlalchemy
 import logging
 
@@ -10,7 +11,7 @@ from sqlalchemy_utils.types.encrypted.encrypted_type import StringEncryptedType,
 Base = declarative_base()
 ENCRYPTION_KEY = os.getenv("DATABASE_ENCRYPTION_KEY")
 
-def encrypt_type(input_type : sqlalchemy.types.TypeEngine, engine : EncryptionDecryptionBaseEngine):
+def encrypt_type(input_type : sqlalchemy.types.TypeEngine, engine : Type[EncryptionDecryptionBaseEngine]):
     if not ENCRYPTION_KEY:
         logging.info(f"ENCRYPTION_KEY is not set, not encrypting Type {input_type}")
         return input_type

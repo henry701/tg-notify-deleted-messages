@@ -62,6 +62,10 @@ editing the messages, instead of deleting them. To handle this, we can store the
 versions of every message, and after forwarding the original message to the bot,
 it should send you the history of edits.
 
+### On-Demand Decryption
+
+After the encryption feature was introduced, debugging queries from the logs has become harder. An on-demand decryption Flask API endpoint could help here.
+
 ## Contribution
 
 Feel free to create issues, bug reports and pull requests. I will be very

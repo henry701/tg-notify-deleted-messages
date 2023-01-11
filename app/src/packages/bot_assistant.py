@@ -12,7 +12,7 @@ from packages.models.root.TelegramMessage import TelegramMessage
 
 class BotAssistant():
 
-    def __init__(self, target_chat : hints.EntityLike, api_id : Union[str, int], api_hash : str, bot_token : str, session_maker : Callable[[], Union[str, Session]] = "db/bot_assistant"):
+    def __init__(self, target_chat : hints.EntityLike, api_id : Union[str, int], api_hash : str, bot_token : str, session_maker : Callable[[], Session]):
         self.target_chat = target_chat
         self.api_id = int(api_id)
         self.api_hash = api_hash
@@ -34,12 +34,14 @@ class BotAssistant():
 
     async def __aexit__(self, *args):
         self.throw_if_uninitialized()
+        assert self.client is not None
         await self.client.__aexit__(*args)
         self.client = None
 
     async def notify_message_deletion(self, message : TelegramMessage, client: TelegramClient):
         logging.debug("bot_assistant notify_message_deletion")
         self.throw_if_uninitialized()
+        assert self.client is not None
         logging.debug("bot_assistant notify_message_deletion send_message")
         await self.client.send_message(
             entity=self.target_chat,

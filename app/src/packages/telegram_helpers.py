@@ -17,8 +17,8 @@ async def get_mention_text(entity):
         mention_username = entity.title
     elif getattr(entity, 'first_name', None) or getattr(entity, 'last_name', None):
         mention_username = \
-            (getattr(entity, 'first_name', None) + " " if getattr(entity, 'first_name', None) else "") + \
-            (getattr(entity, 'last_name', None) if getattr(entity, 'last_name', None) else "")
+            (getattr(entity, 'first_name', '') + " " if getattr(entity, 'first_name', '') else '') + \
+            (getattr(entity, 'last_name', '') if getattr(entity, 'last_name', '') else '')
     elif getattr(entity, 'username', None):
         mention_username = entity.username
     elif getattr(entity, 'phone', None):
@@ -31,7 +31,7 @@ async def get_mention_text(entity):
         mention_username = "UNKNOWN. Type name: " + type(entity).__name__
     return mention_username
 
-async def build_telegram_peer(peer : Union[PeerUser, PeerChat, PeerChannel, None], client : TelegramClient, sqlalchemy_session : Session) -> TelegramPeer:
+async def build_telegram_peer(peer : Union[PeerUser, PeerChat, PeerChannel, None], client : TelegramClient, sqlalchemy_session : Session) -> Union[TelegramPeer, None]:
     async def find_existing_peer(tele_peer):
         return sqlalchemy_session.execute(
             select(TelegramPeer)
@@ -68,7 +68,7 @@ async def format_default_message_text(client : TelegramClient, message : Telegra
     except ValueError:
         if tried:
             raise
-        refresh_client(client)
+        await refresh_client(client)
         return format_default_message_text(client=client, message=message, tried=True)
     mention_username = await get_mention_text(user)
     mention_chatname = await get_mention_text(chat)
@@ -89,7 +89,7 @@ async def format_default_unknown_message_text(client : TelegramClient, message_i
     except ValueError:
         if tried:
             raise
-        refresh_client(client)
+        await refresh_client(client)
         return format_default_unknown_message_text(client=client, message_ids=message_ids, event=event, tried=True)
     mention_chatname = await get_mention_text(chat)
     text = "**Unknown deleted messages** on chat [{chatname}](tg://user?id={chatid})\n".format(

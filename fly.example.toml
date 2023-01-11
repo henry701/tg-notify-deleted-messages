@@ -66,13 +66,12 @@ interval = "60s"
 restart_limit = 5
 timeout = "5s"
 
-# To avoid SQLALchemy stuck sessions and triple as http validator and session saver
 [[services.http_checks]]
 interval = "30s"
 grace_period = "35s"
 method = "get"
-path = "/save_sessions"
+path = "/health"
 protocol = "http"
-restart_limit = 2
+restart_limit = 4
 timeout = "5s"
 tls_skip_verify = false

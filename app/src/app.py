@@ -7,6 +7,7 @@ import functools
 import os
 import signal
 import threading
+import traceback
 
 import flask
 
@@ -36,7 +37,7 @@ import contextlib
 from telethon.errors import SessionPasswordNeededError
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Awaitable, Callable, List, Tuple
+from typing import Any, Awaitable, Callable, List, Tuple, Union
 from telethon.events import NewMessage, MessageDeleted
 from telethon.tl.types import Message
 
@@ -190,7 +191,7 @@ def get_default_notify_unknown_message() -> Callable[[List[int], MessageDeleted.
         )
     return default_notify_unknown_message
 
-def ask_exit(signame, loop : BaseEventLoop, additional):
+def ask_exit(signame, loop : asyncio.AbstractEventLoop, additional):
     logging.warning("got signal %s: exiting" % signame)
     if additional:
         logging.warning("running user-provided cleanupper")
@@ -238,7 +239,7 @@ async def configure_bot(alchemy_telegram_container, telegram_api_id, telegram_ap
             exit(1)
         logging.info('Using bot for message notification')
         bot = BotAssistant(
-            int(target_chat) if bool(strtobool(os.getenv("TARGET_CHAT_IS_ID"))) else target_chat,
+            int(target_chat) if bool(strtobool(os.getenv("TARGET_CHAT_IS_ID", '0'))) else target_chat,
             telegram_api_id,
             telegram_api_hash,
             telegram_bot_token,
@@ -276,14 +277,17 @@ def create_app_and_start_jobs():
 
     stop_event = asyncio.Event()
 
-    client : TelegramClient = None
-    bot : BotAssistant = None
+    client : Union[TelegramClient, None] = None
+    bot : Union[BotAssistant, None] = None
 
     async def closer():
         stop_event.set()
-        if client:
-            await client.disconnect()
-        if bot:
+        if client is not None:
+            disconnecter_coro = client.disconnect()
+            if disconnecter_coro is not None:
+                await disconnecter_coro
+            client = None
+        if bot is not None:
             await bot.__aexit__(None, None, None)
         count = 0
         while asyncio.all_tasks(loop) and count < 10:
@@ -330,20 +334,20 @@ def create_app_and_start_jobs():
         loop
     )
 
-    flask_app = create_app(client, bot, loop)
+    flask_app = create_app(client, bot, loop, sqlalchemy_session_maker)
 
     logging.info("Returning from create_app_and_start_jobs")
     return (flask_app, sync_closer)
 
-def create_app(client : TelegramClient, bot : BotAssistant, loop : asyncio.AbstractEventLoop) -> flask.Flask:
+def create_app(client : TelegramClient, bot : Union[BotAssistant, None], loop : asyncio.AbstractEventLoop, sqlalchemy_session_maker : sessionmaker) -> flask.Flask:
 
     flask_app = flask.Flask(__name__)
 
     phone = require_env("PHONE_NUMBER")
 
-    sent_code : telethon.types.auth.SentCode = None
+    sent_code : Union[telethon.types.auth.SentCode, None] = None
 
-    add_informative_routes(client, bot, flask_app, loop)
+    add_informative_routes(client, bot, flask_app, loop, sqlalchemy_session_maker)
 
     @flask_app.route('/send_code', methods=['GET'])
     def send_code():
@@ -374,7 +378,7 @@ def create_app(client : TelegramClient, bot : BotAssistant, loop : asyncio.Abstr
 
     return flask_app
 
-def add_informative_routes(client : TelegramClient, bot : BotAssistant, flask_app : flask.Flask, loop : asyncio.AbstractEventLoop):
+def add_informative_routes(client : TelegramClient, bot : Union[BotAssistant, None], flask_app : flask.Flask, loop : asyncio.AbstractEventLoop, sqlalchemy_session_maker : sessionmaker):
 
     @flask_app.route('/is_bot_connected', methods=['GET'])
     def is_bot_connected():
@@ -395,8 +399,33 @@ def add_informative_routes(client : TelegramClient, bot : BotAssistant, flask_ap
     @flask_app.route('/save_sessions', methods=['GET'])
     def save_sessions():
         client.session.save()
-        bot.client.session.save()
+        if bot is not None and bot.client is not None:
+            bot.client.session.save()
         return flask.Response(status=204)
+
+    @flask_app.route('/health', methods=['GET'])
+    def health():
+        logging.debug("Health endpoint called")
+        if not loop.is_running():
+            return log_and_return_500("Event Loop not running")
+        if client is None:
+            return log_and_return_500("Client not initialized")
+        if bot is not None and bot.client is not None and not bot.client.is_connected():
+            return log_and_return_500("Bot not connected")
+        if not client.is_connected():
+            return log_and_return_500("Client not connected")
+        try:
+            with sqlalchemy_session_maker.begin() as sqlalchemy_session:
+                sqlalchemy_session.execute(
+                    select(TelegramMessage).limit(1)
+                )
+        except Exception as e:
+            return log_and_return_500("Database Error on health query: " + traceback.format_exc())
+        return flask.Response(status=204)
+    
+    def log_and_return_500(message : str):
+        logging.error(message)
+        return flask.Response(message, status=500)
 
 def main():
     app, closer = create_app_and_start_jobs()

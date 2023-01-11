@@ -1,4 +1,4 @@
-FROM python:3.9.4-alpine3.12 as base
+FROM python:3.9.16-alpine3.17 as base
 
 FROM base as common
 RUN apk --no-cache add openssl

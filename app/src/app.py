@@ -301,11 +301,11 @@ def create_app_and_start_jobs():
 
     database_url = get_db_url()
 
-    old_sqlalchemy_engine = sqlalchemy.create_engine(database_url, echo=False, future=False)
+    old_sqlalchemy_engine = create_engine(database_url, False)
     alchemy_telegram_container = AlchemySessionContainer(engine = old_sqlalchemy_engine, table_base=Base, manage_tables=False, table_prefix=os.getenv("SESSION_TABLE_PREFIX", 'thon_'))
     alchemy_telegram_container.core_mode = True
 
-    sqlalchemy_engine = sqlalchemy.create_engine(database_url, echo=False, future=True)
+    sqlalchemy_engine = create_engine(database_url, True)
     sqlalchemy_session_maker = sessionmaker(bind=sqlalchemy_engine, future=True, expire_on_commit=False)
 
     create_database(sqlalchemy_engine)
@@ -338,6 +338,24 @@ def create_app_and_start_jobs():
 
     logging.info("Returning from create_app_and_start_jobs")
     return (flask_app, sync_closer)
+
+def create_engine(database_url : str, future : bool):
+    return sqlalchemy.create_engine(
+        database_url,
+        echo=False,
+        future=future,
+        pool_size=10,
+        max_overflow=2,
+        pool_recycle=300,
+        pool_pre_ping=True,
+        pool_use_lifo=True,
+        connect_args={
+            "keepalives": 1,
+            "keepalives_idle": 30,
+            "keepalives_interval": 10,
+            "keepalives_count": 5,
+        }
+    )
 
 def create_app(client : TelegramClient, bot : Union[BotAssistant, None], loop : asyncio.AbstractEventLoop, sqlalchemy_session_maker : sessionmaker) -> flask.Flask:
 

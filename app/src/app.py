@@ -26,8 +26,6 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import delete, select
 
-import concurrent.futures
-
 from telethon import TelegramClient, events
 import telethon
 
@@ -38,7 +36,6 @@ from telethon.errors import SessionPasswordNeededError
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, List, Tuple, Union
 from telethon.events import NewMessage, MessageDeleted
-from telethon.tl.types import Message
 
 from packages.models.root.TelegramMessage import TelegramMessage
 from packages.models import Base
@@ -97,13 +94,13 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
                     )
                 )
 
-        futures : List[concurrent.futures.Future[Message]] = []
+        awaitables : List[Awaitable[Any]] = []
         for message in messages:
-            futures.append(asyncio.run_coroutine_threadsafe(notify_message_deletion(message, client), client.loop))
+            awaitables.append(notify_message_deletion(message, client))
         if unloaded_ids and len(unloaded_ids):
-            futures.append(asyncio.run_coroutine_threadsafe(notify_unknown_message(unloaded_ids, event, client), client.loop))
-        if len(futures) > 0:
-            await asyncio.gather(*futures)
+            awaitables.append(notify_unknown_message(unloaded_ids, event, client))
+        if len(awaitables) > 0:
+            await asyncio.gather(*awaitables)
 
     return on_message_deleted
 

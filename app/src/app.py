@@ -6,6 +6,7 @@ import functools
 import os
 import signal
 import threading
+import time
 
 import flask
 
@@ -279,13 +280,16 @@ def create_app_and_start_jobs():
     loop = asyncio.events.new_event_loop()
     nest_asyncio.apply(loop)
 
-    stop_event = asyncio.Event()
-
+    stop_event : Union[asyncio.Event, None] = None
     client : Union[TelegramClient, None] = None
     bot : Union[BotAssistant, None] = None
 
     async def closer():
-        stop_event.set()
+        nonlocal stop_event
+        nonlocal client
+        nonlocal bot
+        if stop_event is not None:
+            stop_event.set()
         if client is not None:
             disconnecter_coro = client.disconnect()
             if disconnecter_coro is not None:
@@ -329,6 +333,8 @@ def create_app_and_start_jobs():
         logging.info("Entering worker function!")
         try:
             asyncio.set_event_loop(loop)
+            nonlocal stop_event
+            stop_event = asyncio.Event()
             loop.run_forever()
         except Exception as e:
             logging.critical("Error on worker function! {e}".format(e=e))
@@ -337,6 +343,12 @@ def create_app_and_start_jobs():
             logging.info("Exiting worker function!")
     worker_thread = threading.Thread(target=worker_function, args=(loop, sync_closer), name='loop-app-client-bgthread')
     worker_thread.start()
+
+    while stop_event is None and worker_thread.is_alive:
+        time.sleep(0)
+
+    if stop_event is None:
+        raise RuntimeError("Worker thread died before setting stop_event!")
 
     asyncio.run_coroutine_threadsafe(
         client_main_loop_job(stop_event, sqlalchemy_session_maker, configured_notify_message_deletion, configured_notify_unknown_message, client),

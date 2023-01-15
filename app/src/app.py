@@ -1,13 +1,11 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-from asyncio.base_events import BaseEventLoop
 import logging
 import functools
 import os
 import signal
 import threading
-import traceback
 
 import flask
 
@@ -46,12 +44,10 @@ from packages.models import Base
 
 from packages.bot_assistant import BotAssistant
 
-from urllib.parse import urlparse
 
 import nest_asyncio
 
 import asyncio
-from asyncio.tasks import Task
 
 from distutils.util import strtobool
 
@@ -148,21 +144,29 @@ async def load_messages_from_event(event: MessageDeleted.Event, sqlalchemy_sessi
 
 async def clean_old_messages_loop(sqlalchemy_session_maker : sessionmaker, seconds_interval : int, ttl : timedelta, stop_event : asyncio.Event):
     logging.info('Starting Clean Old Messages Loop')
-    while True:
-        delete_from_time = datetime.now(tz=timezone.utc) - ttl
-        with sqlalchemy_session_maker.begin() as sqlalchemy_session:
-            res = sqlalchemy_session.execute(
-                delete(TelegramMessage).where(TelegramMessage.timestamp < delete_from_time)
-            )
-        count = res.rowcount
-        logging.info(
-            f"Deleted {str(count)} messages older than {str(delete_from_time)} from DB. Sleeping for {seconds_interval} seconds..."
-        )
-        with contextlib.suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(stop_event.wait(), seconds_interval)
-        if stop_event.is_set():
-            break
-    logging.info('Exiting Clean Old Messages Loop')
+    try:
+        while True:
+            try:
+                delete_from_time = datetime.now(tz=timezone.utc) - ttl
+                with sqlalchemy_session_maker.begin() as sqlalchemy_session:
+                    res = sqlalchemy_session.execute(
+                        delete(TelegramMessage).where(TelegramMessage.timestamp < delete_from_time)
+                    )
+                count = res.rowcount
+                logging.info(
+                    f"Deleted {str(count)} messages older than {str(delete_from_time)} from DB. Sleeping for {seconds_interval} seconds..."
+                )
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(stop_event.wait(), seconds_interval)
+                if stop_event.is_set():
+                    logging.info('Stop event is set, breaking from Clean Old Messages Inner Loop!')
+                    break
+            except Exception as e:
+                logging.critical("Error on Clean Old Messages Inner Loop Handler! {e}".format(e=e))
+    except Exception as e:
+        logging.critical("Error on Clean Old Messages Outer Loop Handler! {e}".format(e=e))
+    finally:
+        logging.info('Exiting Clean Old Messages Loop')
 
 def get_base_notify_message_deletion(sqlalchemy_session_maker : sessionmaker) -> Callable[[TelegramMessage, TelegramClient], Awaitable[Any]]:
     async def base_notify_message_deletion(message : TelegramMessage, client : TelegramClient):
@@ -206,7 +210,7 @@ def ask_exit(signame, loop : asyncio.AbstractEventLoop, additional):
         task.cancel()
     logging.warning("cancelled all tasks")
 
-async def make_client(alchemy_telegram_container : AlchemySessionContainer, telegram_api_id, telegram_api_hash, session_id, loop : BaseEventLoop):
+async def make_client(alchemy_telegram_container : AlchemySessionContainer, telegram_api_id, telegram_api_hash, session_id, loop : asyncio.AbstractEventLoop):
     telegram_session = alchemy_telegram_container.new_session(session_id)
     client = TelegramClient(session=telegram_session, api_id=telegram_api_id, api_hash=telegram_api_hash, loop=loop)
     logging.info('Connecting Telegram Client')
@@ -321,12 +325,17 @@ def create_app_and_start_jobs():
 
     client = loop.run_until_complete(make_client(alchemy_telegram_container, telegram_api_id, telegram_api_hash, session_id, loop))
 
-    def worker_function(loop : BaseEventLoop):
+    def worker_function(loop : asyncio.AbstractEventLoop, sync_closer : Callable[[], Any]):
         logging.info("Entering worker function!")
-        asyncio.set_event_loop(loop)
-        loop.run_forever()
-        logging.info("Exiting worker function!")
-    worker_thread = threading.Thread(target=worker_function, args=(loop,), name='loop-app-client-bgthread')
+        try:
+            asyncio.set_event_loop(loop)
+            loop.run_forever()
+        except Exception as e:
+            logging.critical("Error on worker function! {e}".format(e=e))
+            sync_closer()
+        finally:
+            logging.info("Exiting worker function!")
+    worker_thread = threading.Thread(target=worker_function, args=(loop, sync_closer), name='loop-app-client-bgthread')
     worker_thread.start()
 
     asyncio.run_coroutine_threadsafe(
@@ -438,7 +447,7 @@ def add_informative_routes(client : TelegramClient, bot : Union[BotAssistant, No
                     select(TelegramMessage).limit(1)
                 )
         except Exception as e:
-            return log_and_return_500("Database Error on health query: " + traceback.format_exc())
+            return log_and_return_500("Database Error on health query: {e}".format(e=e))
         return flask.Response(status=204)
     
     def log_and_return_500(message : str):

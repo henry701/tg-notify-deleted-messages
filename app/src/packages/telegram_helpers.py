@@ -82,7 +82,7 @@ async def format_default_message_text(client : TelegramClient, message : Telegra
         text += "**Message Text:** " + message.text
     return text
 
-async def format_default_unknown_message_text(client : TelegramClient, message_ids : List[int], event : MessageDeleted.Event, tried : bool = False):
+async def format_default_unknown_message_text(client : TelegramClient, message_ids : List[int], event : MessageDeleted.Event, tried : bool = False) -> str:
     try:
         input_chat = await event.get_input_chat()
         chat = await client.get_entity(input_chat) if input_chat else None
@@ -90,7 +90,7 @@ async def format_default_unknown_message_text(client : TelegramClient, message_i
         if tried:
             raise
         await refresh_client(client)
-        return format_default_unknown_message_text(client=client, message_ids=message_ids, event=event, tried=True)
+        return await format_default_unknown_message_text(client=client, message_ids=message_ids, event=event, tried=True)
     mention_chatname = await get_mention_text(chat)
     text = "**Unknown deleted messages** on chat [{chatname}](tg://user?id={chatid})\n".format(
         chatname=mention_chatname,

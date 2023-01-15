@@ -52,6 +52,7 @@ class BotAssistant():
     async def notify_unknown_message(self, message_ids : List[int], event : MessageDeleted.Event, client: TelegramClient):
         logging.debug("bot_assistant notify_unknown_message")
         self.throw_if_uninitialized()
+        assert self.client is not None
         logging.debug("bot_assistant notify_unknown_message send_message")
         await self.client.send_message(
             entity=self.target_chat,

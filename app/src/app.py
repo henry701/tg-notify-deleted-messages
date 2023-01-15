@@ -147,7 +147,7 @@ async def load_messages_from_event(event: MessageDeleted.Event, sqlalchemy_sessi
     return (db_results, the_query, unloaded_ids)
 
 async def clean_old_messages_loop(sqlalchemy_session_maker : sessionmaker, seconds_interval : int, ttl : timedelta, stop_event : asyncio.Event):
-    logging.debug('Starting Clean Old Messages Loop')
+    logging.info('Starting Clean Old Messages Loop')
     while True:
         delete_from_time = datetime.now(tz=timezone.utc) - ttl
         with sqlalchemy_session_maker.begin() as sqlalchemy_session:
@@ -162,7 +162,7 @@ async def clean_old_messages_loop(sqlalchemy_session_maker : sessionmaker, secon
             await asyncio.wait_for(stop_event.wait(), seconds_interval)
         if stop_event.is_set():
             break
-    logging.debug('Exiting Clean Old Messages Loop')
+    logging.info('Exiting Clean Old Messages Loop')
 
 def get_base_notify_message_deletion(sqlalchemy_session_maker : sessionmaker) -> Callable[[TelegramMessage, TelegramClient], Awaitable[Any]]:
     async def base_notify_message_deletion(message : TelegramMessage, client : TelegramClient):
@@ -260,9 +260,9 @@ async def client_main_loop_job(stop_event, sqlalchemy_session_maker, configured_
     async def actual_notify_message_deletion(message : TelegramMessage, client : TelegramClient):
         await base_notify_message_deletion(message, client)
         await configured_notify_message_deletion(message, client)
-    logging.debug('Adding event handlers')
+    logging.info('Adding event handlers')
     await add_event_handlers(client, sqlalchemy_session_maker, actual_notify_message_deletion, configured_notify_unknown_message)
-    logging.debug('Added event handlers')
+    logging.info('Added event handlers')
     await clean_old_messages_loop(
         sqlalchemy_session_maker=sqlalchemy_session_maker,
         seconds_interval=int(os.getenv("CLEAN_OLD_MESSAGES_SECONDS_INTERVAL", 900)),

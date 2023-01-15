@@ -50,7 +50,7 @@ async def build_telegram_peer(peer : Union[PeerUser, PeerChat, PeerChannel, None
     if existing_peer:
         return existing_peer
     sqlalchemy_session.add(tele_peer)
-    sqlalchemy_session.commit()
+    sqlalchemy_session.flush()
     return await find_existing_peer(tele_peer)
 
 def to_telethon_input_peer(telegram_peer : TelegramPeer) -> Union[InputPeerUser, InputPeerChannel, InputPeerChat]:

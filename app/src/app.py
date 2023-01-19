@@ -395,22 +395,29 @@ def create_app(client : TelegramClient, bot : Union[BotAssistant, None], loop : 
 
     @flask_app.route('/auth', methods=['GET'])
     def auth():
+        nonlocal sent_code
         logging.info('Auth request received')
         code = flask.request.args.get("code")
         password = flask.request.args.get("password")
         if not sent_code:
-            return flask.Response({"message": "Missing send_code request"}, status=401)
-        if not code:
-            return flask.Response({"message": "Missing code queryParameter"}, status=403)
+            return flask.Response("Missing send_code request", status=401)
+        if not code and not password:
+            return flask.Response("Missing code and password queryParameter. Either one or the other should be present!", status=403)
+        if code and password:
+            return flask.Response("Both code and password parameters present, but either one or the other should be present!", status=400)
         try:
             logging.info('Attempting to sign in')
-            if asyncio.run_coroutine_threadsafe(client.sign_in(phone_code_hash=sent_code.phone_code_hash, phone=phone, code=code, password=password), loop).result():
+            sign_in_result = asyncio.run_coroutine_threadsafe(client.sign_in(phone_code_hash=sent_code.phone_code_hash, phone=phone, code=code, password=password), loop).result()
+            if isinstance(sign_in_result, telethon.types.User):
                 return flask.Response(status=204)
-            return flask.Response(status=403)
+            if isinstance(sign_in_result, telethon.types.auth.SentCode):
+                sent_code = sign_in_result
+                return flask.Response("Sent code, but auth is still incomplete!", status=401)
+            return flask.Response("Unknown return from client.sign_in, probable Telethon or application bug!", status=500)
         except (telethon.errors.rpcerrorlist.AuthKeyUnregisteredError, telethon.errors.rpcerrorlist.AuthKeyDuplicatedError):
-            return flask.Response({"message": "Missing new send_code request. Unregistered or duplicate!"}, status=401)
+            return flask.Response("Missing new send_code request. Unregistered or duplicate!", status=401)
         except SessionPasswordNeededError:
-            return flask.Response({"message": "Password needed!"}, status=401)
+            return flask.Response("Password needed!", status=401)
 
     return flask_app
 

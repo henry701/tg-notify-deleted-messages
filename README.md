@@ -34,17 +34,16 @@ variables at the system level.
 
 ## Roadmap
 
-### Display the chat from which the message was deleted
+### Attachment Support
 
-Now it sends only the information about the sender of the message, but it
-doesn't point from which entity the message was deleted.
+Attachment media is currently not working and needs to be fixed.
 
 ### Preload the history when the application starts
 
 If you want to support old messages, but you start this application after those messages were sent,
 in case those messages are deleted the application will be unable to notify you about them.
 
-Preloading old messages (limited by `MESSAGES_TTL_DAYS`) would fix this issue.
+Preloading old messages (limited by `MESSAGES_TTL_DAYS` environment variable) would fix this issue.
 
 ### Edits
 
@@ -55,18 +54,20 @@ you will receive the information only about the first version of the message.
 The best implementation would be to store all versions of the message and receive
 all of them.
 
-#### Messages versions
+#### Message versions
 
 As soon as your companion knows that you using this tool, they will start
 editing the messages, instead of deleting them. To handle this, we can store the
 versions of every message, and after forwarding the original message to the bot,
 it should send you the history of edits.
 
+Or it could simply notify right away with the old version of the message every time an edit event arrives for that message.
+
 ### On-Demand Decryption
 
-After the encryption feature was introduced, debugging queries from the logs has become harder. An on-demand decryption Flask API endpoint could help here.
+After the encryption feature was introduced, debugging queries from the logs has become harder. An on-demand decryption Flask API endpoint could help us here, but is currently complex to implement because of the way encryption is coupled with the persistence code.
 
 ## Contribution
 
 Feel free to create issues, bug reports and pull requests. I will be very
-grateful, if someone implements one of the features described in the roadmap!
+grateful if someone implements any of the features described in the roadmap!

@@ -102,7 +102,7 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
                         deleted_messages_count=deleted_messages_count_str,
                         db_messages_count=db_messages_count_str,
                         filtered_away_messages_count=filtered_away_messages_count_str,
-                        query_str=str(query.compile(compile_kwargs={'literal_binds': True}))
+                        query_str=str(query.compile(compile_kwargs={'literal_binds': True})) if query else "(no query)"
                     )
                 )
             except Exception as e:

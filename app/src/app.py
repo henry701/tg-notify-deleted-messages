@@ -62,6 +62,7 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
     ignore_groups = bool(strtobool(os.getenv("IGNORE_GROUPS", '0')))
     ignore_megagroups = bool(strtobool(os.getenv("IGNORE_MEGAGROUPS", '0')))
     ignore_gigagroups = bool(strtobool(os.getenv("IGNORE_GIGAGROUPS", '0')))
+    member_ignore_threshold = int(os.getenv("MEMBER_IGNORE_THRESHOLD", '0'))
 
     async def on_message_deleted(event: MessageDeleted.Event):
 
@@ -73,7 +74,8 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
                 ignore_channels,
                 ignore_groups,
                 ignore_megagroups,
-                ignore_gigagroups
+                ignore_gigagroups,
+                member_ignore_threshold
         )
 
         deleted_messages_count = len(event.deleted_ids)
@@ -129,6 +131,7 @@ def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : Telegra
     ignore_groups = bool(strtobool(os.getenv("IGNORE_GROUPS", '0')))
     ignore_megagroups = bool(strtobool(os.getenv("IGNORE_MEGAGROUPS", '0')))
     ignore_gigagroups = bool(strtobool(os.getenv("IGNORE_GIGAGROUPS", '0')))
+    member_ignore_threshold = int(os.getenv("MEMBER_IGNORE_THRESHOLD", '0'))
 
     async def on_new_message(event: NewMessage.Event):
 
@@ -138,10 +141,12 @@ def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : Telegra
         
         should_ignore : bool = await should_ignore_incoming_message(
             message,
+            client,
             ignore_channels,
             ignore_groups,
             ignore_megagroups,
             ignore_gigagroups,
+            member_ignore_threshold,
         )
 
         with sqlalchemy_session_maker.begin() as sqlalchemy_session:
@@ -159,18 +164,22 @@ def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : Telegra
 
 async def should_ignore_incoming_message(
         message : telethon.tl.custom.message.Message,
+        client : TelegramClient,
         ignore_channels : bool,
         ignore_groups : bool,
         ignore_megagroups : bool,
         ignore_gigagroups : bool,
+        member_ignore_threshold : int,
     ) -> bool:
     chat : Union[telethon.types.User, telethon.types.Chat, telethon.types.Channel, None] = await message.get_chat() # type: ignore
     return await should_ignore_message_chat(
         chat,
+        client,
         ignore_channels,
         ignore_groups,
         ignore_megagroups,
         ignore_gigagroups,
+        member_ignore_threshold
     )
 
 async def should_ignore_deleted_message(
@@ -180,27 +189,45 @@ async def should_ignore_deleted_message(
         ignore_groups : bool,
         ignore_megagroups : bool,
         ignore_gigagroups : bool,
+        member_ignore_threshold : int,
     ) -> bool:
     peer_entity : Union[telethon.types.User, telethon.types.Chat, telethon.types.Channel, None] = await build_peer_entity(telegram_message.chat_peer, client)
     return await should_ignore_message_chat(
         peer_entity,
+        client,
         ignore_channels,
         ignore_groups,
         ignore_megagroups,
         ignore_gigagroups,
+        member_ignore_threshold
     )
 
 # https://docs.telethon.dev/en/stable/concepts/chats-vs-channels.html
 # https://core.telegram.org/constructor/channel
 async def should_ignore_message_chat(
         peer_entity : Union[telethon.types.User, telethon.types.Chat, telethon.types.Channel, None],
+        client : TelegramClient,
         ignore_channels : bool,
         ignore_groups : bool,
         ignore_megagroups : bool,
         ignore_gigagroups : bool,
+        member_ignore_threshold : int,
     ):
     if peer_entity is None:
         return False
+    if member_ignore_threshold and member_ignore_threshold > 0:
+        participants_count : Union[int, None] = None
+        if isinstance(peer_entity, telethon.types.Channel):
+            input_entity = await client.get_input_entity(peer_entity)
+            input_channel = telethon.utils.get_input_channel(input_entity)
+            request = telethon.tl.functions.channels.GetFullChannelRequest(channel=input_channel)
+            channel_full_info = await client(request)
+            full_chat : telethon.types.ChannelFull = channel_full_info.full_chat # type: ignore
+            participants_count = full_chat.participants_count
+        if isinstance(peer_entity, telethon.types.Chat):
+            participants_count = peer_entity.participants_count
+        if participants_count and participants_count >= member_ignore_threshold:
+                return True
     if ignore_channels:
         if isinstance(peer_entity, telethon.types.Channel) and peer_entity.broadcast:
             return True
@@ -229,7 +256,7 @@ async def build_peer_entity(peer : TelegramPeer, client : TelegramClient):
     input_peer = to_telethon_input_peer(peer)
     if input_peer is None:
         return None
-    return await client.get_entity(input_peer)
+    return await client.get_entity(input_peer) # type: ignore
 
 async def load_messages_from_event(
         event: MessageDeleted.Event,
@@ -239,6 +266,7 @@ async def load_messages_from_event(
         ignore_groups : bool,
         ignore_megagroups : bool,
         ignore_gigagroups : bool,
+        member_ignore_threshold : int,
     ) -> Tuple[List[TelegramMessage], Select, List[int], List[int]]:
     
     logging.debug(f"Searching for messages in {event.deleted_ids}")
@@ -264,6 +292,7 @@ async def load_messages_from_event(
         ignore_groups,
         ignore_megagroups,
         ignore_gigagroups,
+        member_ignore_threshold,
         client,
         db_results
     )
@@ -277,6 +306,7 @@ async def filter_deleted_messages_for_event(
         ignore_groups : bool,
         ignore_megagroups : bool,
         ignore_gigagroups : bool,
+        member_ignore_threshold : int,
         client : TelegramClient,
         db_results : List[TelegramMessage],
     ) -> List[TelegramMessage]:
@@ -288,7 +318,8 @@ async def filter_deleted_messages_for_event(
             ignore_channels,
             ignore_groups,
             ignore_megagroups,
-            ignore_gigagroups
+            ignore_gigagroups,
+            member_ignore_threshold
         )
     ]
 

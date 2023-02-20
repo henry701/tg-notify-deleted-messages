@@ -200,25 +200,19 @@ async def should_ignore_message_chat(
         ignore_gigagroups : bool,
     ):
     if peer_entity is None:
-        logging.info('Not filtering from None chat')
         return False
     if ignore_channels:
-        logging.info('in ignore_channels for chat {peer_entity}'.format(peer_entity=peer_entity))
         if isinstance(peer_entity, (telethon.types.PeerChannel, telethon.types.Channel)) and peer_entity.broadcast:
             return True
     if ignore_groups:
-        logging.info('in ignore_groups for chat {peer_entity}'.format(peer_entity=peer_entity))
         if isinstance(peer_entity, (telethon.types.PeerChat, telethon.types.Chat)):
             return True
     if ignore_megagroups:
-        logging.info('in ignore_megagroups for chat {peer_entity}'.format(peer_entity=peer_entity))
         if isinstance(peer_entity, (telethon.types.PeerChannel, telethon.types.Channel)) and peer_entity.megagroup and not peer_entity.gigagroup:
             return True
     if ignore_gigagroups:
-        logging.info('in ignore_gigagroups for chat {peer_entity}'.format(peer_entity=peer_entity))
         if isinstance(peer_entity, (telethon.types.PeerChannel, telethon.types.Channel)) and peer_entity.gigagroup:
             return True
-    logging.info('Not ignoring from chat chat {peer_entity}'.format(peer_entity=peer_entity))
     return False
 
 async def build_peer_entity(peer : TelegramPeer, client : TelegramClient):

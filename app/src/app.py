@@ -265,9 +265,29 @@ async def load_messages_from_event(
         ignore_megagroups : bool,
         ignore_gigagroups : bool,
         member_ignore_threshold : int,
-    ) -> Tuple[List[TelegramMessage], Select, List[int], List[int]]:
+    ) -> Tuple[List[TelegramMessage], Union[Select, None], List[int], List[int]]:
     
     logging.debug(f"Searching for messages in {event.deleted_ids}")
+
+    chat = None
+    try:
+        input_chat = await event.get_input_chat()
+        chat = await client.get_entity(input_chat) if input_chat else None
+    except ValueError:
+        pass
+    # If we know the chat where the event came from,
+    # and it should be ignored, then don't even bother
+    # querying the database.
+    if chat and should_ignore_message_chat(
+        chat,
+        client,
+        ignore_channels,
+        ignore_groups,
+        ignore_megagroups,
+        ignore_gigagroups,
+        member_ignore_threshold
+    ):
+        return ([], None, [], event.deleted_ids)
 
     the_query = select(TelegramMessage).where(TelegramMessage.id.in_(event.deleted_ids))
     
@@ -292,8 +312,7 @@ async def load_messages_from_event(
         ignore_gigagroups,
         member_ignore_threshold,
         client,
-        db_results,
-        event,
+        db_results
     )
     
     filtered_away_ids = [int(str(message.id)) for message in db_results if message not in filtered_results]
@@ -308,27 +327,7 @@ async def filter_deleted_messages_for_event(
         member_ignore_threshold : int,
         client : TelegramClient,
         db_results : List[TelegramMessage],
-        event : MessageDeleted.Event,
     ) -> List[TelegramMessage]:
-    chat = None
-    try:
-        input_chat = await event.get_input_chat()
-        chat = await client.get_entity(input_chat) if input_chat else None
-    except ValueError:
-        pass
-    # If we know the chat where the event came from,
-    # and it should be ignored, then don't even bother
-    # filtering the messages individually.
-    if chat and should_ignore_message_chat(
-        chat,
-        client,
-        ignore_channels,
-        ignore_groups,
-        ignore_megagroups,
-        ignore_gigagroups,
-        member_ignore_threshold
-    ):
-        return []
     return [
         message for message in db_results
         if not await should_ignore_deleted_message(

@@ -1,4 +1,4 @@
-Telethon>=1.23.0,<2.0.0
+Telethon>=1.27.0,<2.0.0
 python-dotenv>=v0.16.0,<v1.0.0
 SQLAlchemy==1.4.23
 telethon-session-sqlalchemy>=0.2.16,<1.0.0

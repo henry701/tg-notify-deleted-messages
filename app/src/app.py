@@ -202,16 +202,24 @@ async def should_ignore_message_chat(
     if peer_entity is None:
         return False
     if ignore_channels:
-        if isinstance(peer_entity, (telethon.types.PeerChannel, telethon.types.Channel)) and peer_entity.broadcast:
+        if isinstance(peer_entity, telethon.types.Channel) and peer_entity.broadcast:
             return True
+        # Discussion group for a channel... We should count it as a channel for our purposes
+        # https://core.telegram.org/api/discussion
+        # if isinstance(peer_entity, telethon.types.Channel) and not peer_entity.join_to_send:
+        #    return True
+        # TODO: join_to_send is not exposed on Telethon,
+        # and getting None every time would make all messages from [[super/mega]+giga]groups be ignored...
+        # Also we want to ignore messages where join_to_send is true, how to know if a group is a discussion group
+        # [...] Without iterating all channels? God damnit, Telegram.
     if ignore_groups:
-        if isinstance(peer_entity, (telethon.types.PeerChat, telethon.types.Chat)):
+        if isinstance(peer_entity, telethon.types.Chat):
             return True
     if ignore_megagroups:
-        if isinstance(peer_entity, (telethon.types.PeerChannel, telethon.types.Channel)) and peer_entity.megagroup and not peer_entity.gigagroup:
+        if isinstance(peer_entity, telethon.types.Channel) and peer_entity.megagroup and not peer_entity.gigagroup:
             return True
     if ignore_gigagroups:
-        if isinstance(peer_entity, (telethon.types.PeerChannel, telethon.types.Channel)) and peer_entity.gigagroup:
+        if isinstance(peer_entity, telethon.types.Channel) and peer_entity.gigagroup:
             return True
     return False
 

@@ -24,7 +24,7 @@ class PeerType(IntEnum):
             raise ValueError(f"Unable to get PeerType for type: {_type}")
         return None
 
-    def to_input_type(self, id : int, access_hash : Union[int, None], mandatory = False) -> Union[InputPeerUser, InputPeerChannel, InputPeerChat]:
+    def to_input_type(self, id : int, access_hash : Union[int, None], mandatory = False) -> Union[InputPeerUser, InputPeerChannel, InputPeerChat, InputPeerSelf, InputEncryptedChat, None]:
         if self == PeerType.USER:
             return InputPeerUser(id, access_hash) if access_hash else InputPeerSelf()
         if self == PeerType.CHANNEL:

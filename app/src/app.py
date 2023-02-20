@@ -60,11 +60,21 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
 
     ignore_channels = bool(strtobool(os.getenv("IGNORE_CHANNELS", '0')))
     ignore_groups = bool(strtobool(os.getenv("IGNORE_GROUPS", '0')))
+    ignore_megagroups = bool(strtobool(os.getenv("IGNORE_MEGAGROUPS", '0')))
+    ignore_gigagroups = bool(strtobool(os.getenv("IGNORE_GIGAGROUPS", '0')))
 
     async def on_message_deleted(event: MessageDeleted.Event):
 
         with sqlalchemy_session_maker.begin() as sqlalchemy_session:
-            (messages, query, unloaded_ids, filtered_away_ids) = await load_messages_from_event(event, client, sqlalchemy_session, ignore_channels, ignore_groups)
+            (messages, query, unloaded_ids, filtered_away_ids) = await load_messages_from_event(
+                event,
+                client,
+                sqlalchemy_session,
+                ignore_channels,
+                ignore_groups,
+                ignore_megagroups,
+                ignore_gigagroups
+        )
 
         deleted_messages_count = len(event.deleted_ids)
         deleted_messages_count_str = str(deleted_messages_count)
@@ -72,33 +82,33 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
         db_messages_count = len(messages)
         db_messages_count_str = str(db_messages_count)
 
-        filtered_messages_count = len(filtered_away_ids)
-        filtered_messages_count_str = str(filtered_messages_count)
+        filtered_away_messages_count = len(filtered_away_ids)
+        filtered_away_messages_count_str = str(filtered_away_messages_count)
         
         logging.info(
-            "Got {deleted_messages_count} deleted messages. Has matching in DB: {db_messages_count}. Filtered away: {filtered_messages_count}".format(
+            "Got {deleted_messages_count} deleted messages. Has matching in DB: {db_messages_count}. Filtered away: {filtered_away_messages_count}".format(
                 deleted_messages_count=deleted_messages_count_str,
                 db_messages_count=db_messages_count_str,
-                filtered_messages_count=filtered_messages_count_str,
+                filtered_away_messages_count=filtered_away_messages_count_str,
             )
         )
 
-        if deleted_messages_count > db_messages_count + filtered_messages_count:
+        if deleted_messages_count > db_messages_count + filtered_away_messages_count:
             try:
                 logging.warning(
-                    "Got {deleted_messages_count} deleted messages but only found {db_messages_count} (with {filtered_messages_count} filtered away) matching in database! Query: {query_str}".format(
+                    "Got {deleted_messages_count} deleted messages but only found {db_messages_count} (with {filtered_away_messages_count} filtered away) matching in database! Query: {query_str}".format(
                         deleted_messages_count=deleted_messages_count_str,
                         db_messages_count=db_messages_count_str,
-                        filtered_messages_count=filtered_messages_count_str,
+                        filtered_away_messages_count=filtered_away_messages_count_str,
                         query_str=str(query.compile(compile_kwargs={'literal_binds': True}))
                     )
                 )
             except Exception as e:
                 logging.error(
-                    "Error while logging missing deleted message (has {db_messages_count} of {deleted_messages_count}, with {filtered_messages_count} filtered away): {e}".format(
+                    "Error while logging missing deleted message (has {db_messages_count} of {deleted_messages_count}, with {filtered_away_messages_count} filtered away): {e}".format(
                         deleted_messages_count=deleted_messages_count_str,
                         db_messages_count=db_messages_count_str,
-                        filtered_messages_count=filtered_messages_count_str,
+                        filtered_away_messages_count=filtered_away_messages_count_str,
                         e=e
                     )
                 )
@@ -117,20 +127,28 @@ def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : Telegra
 
     ignore_channels = bool(strtobool(os.getenv("IGNORE_CHANNELS", '0')))
     ignore_groups = bool(strtobool(os.getenv("IGNORE_GROUPS", '0')))
+    ignore_megagroups = bool(strtobool(os.getenv("IGNORE_MEGAGROUPS", '0')))
+    ignore_gigagroups = bool(strtobool(os.getenv("IGNORE_GIGAGROUPS", '0')))
 
     async def on_new_message(event: NewMessage.Event):
 
         logging.debug(f"on_new_message: {event}")
-        # Cache Lib Entities (Telethon is kinda bad for erroring instead of network requesting entities when missing...)
-        await event.get_input_sender()
-        await event.get_input_chat()
+
         message : telethon.tl.custom.message.Message = event.message
-        should_ignore = (ignore_channels and message.is_channel) or (ignore_groups and message.is_group)
+        
+        should_ignore : bool = await should_ignore_incoming_message(
+            message,
+            ignore_channels,
+            ignore_groups,
+            ignore_megagroups,
+            ignore_gigagroups,
+        )
+
         with sqlalchemy_session_maker.begin() as sqlalchemy_session:
             orm_message = TelegramMessage(
                 id = message.id,
-                from_peer = await build_telegram_peer(event.from_id, client, sqlalchemy_session),
-                chat_peer = await build_telegram_peer(event.peer_id, client, sqlalchemy_session),
+                from_peer = await build_telegram_peer(message.from_id, client, sqlalchemy_session),
+                chat_peer = await build_telegram_peer(message.peer_id, client, sqlalchemy_session),
                 text = None if should_ignore else message.message,
                 media = None if should_ignore else message.media,
                 timestamp = message.date
@@ -139,7 +157,87 @@ def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : Telegra
 
     return on_new_message
 
-async def load_messages_from_event(event: MessageDeleted.Event, client : TelegramClient, sqlalchemy_session : Session, ignore_channels : bool, ignore_groups : bool) -> Tuple[List[TelegramMessage], Select, List[int], List[int]]:
+async def should_ignore_incoming_message(
+        message : telethon.tl.custom.message.Message,
+        ignore_channels : bool,
+        ignore_groups : bool,
+        ignore_megagroups : bool,
+        ignore_gigagroups : bool,
+    ) -> bool:
+    chat : Union[telethon.types.User, telethon.types.Chat, telethon.types.Channel, None] = await message.get_chat() # type: ignore
+    return await should_ignore_message_chat(
+        chat,
+        ignore_channels,
+        ignore_groups,
+        ignore_megagroups,
+        ignore_gigagroups,
+    )
+
+async def should_ignore_deleted_message(
+        telegram_message : TelegramMessage,
+        client : TelegramClient,
+        ignore_channels : bool,
+        ignore_groups : bool,
+        ignore_megagroups : bool,
+        ignore_gigagroups : bool,
+    ) -> bool:
+    peer_entity : Union[telethon.types.User, telethon.types.Chat, telethon.types.Channel, None] = await build_peer_entity(telegram_message.chat_peer, client)
+    return await should_ignore_message_chat(
+        peer_entity,
+        ignore_channels,
+        ignore_groups,
+        ignore_megagroups,
+        ignore_gigagroups,
+    )
+
+# https://docs.telethon.dev/en/stable/concepts/chats-vs-channels.html
+# https://core.telegram.org/constructor/channel
+async def should_ignore_message_chat(
+        peer_entity : Union[telethon.types.User, telethon.types.Chat, telethon.types.Channel, None],
+        ignore_channels : bool,
+        ignore_groups : bool,
+        ignore_megagroups : bool,
+        ignore_gigagroups : bool,
+    ):
+    if peer_entity is None:
+        logging.info('Not filtering from None chat')
+        return False
+    if ignore_channels:
+        logging.info('in ignore_channels for chat {peer_entity}'.format(peer_entity=peer_entity))
+        if isinstance(peer_entity, (telethon.types.PeerChannel, telethon.types.Channel)) and peer_entity.broadcast:
+            return True
+    if ignore_groups:
+        logging.info('in ignore_groups for chat {peer_entity}'.format(peer_entity=peer_entity))
+        if isinstance(peer_entity, (telethon.types.PeerChat, telethon.types.Chat)):
+            return True
+    if ignore_megagroups:
+        logging.info('in ignore_megagroups for chat {peer_entity}'.format(peer_entity=peer_entity))
+        if isinstance(peer_entity, (telethon.types.PeerChannel, telethon.types.Channel)) and peer_entity.megagroup and not peer_entity.gigagroup:
+            return True
+    if ignore_gigagroups:
+        logging.info('in ignore_gigagroups for chat {peer_entity}'.format(peer_entity=peer_entity))
+        if isinstance(peer_entity, (telethon.types.PeerChannel, telethon.types.Channel)) and peer_entity.gigagroup:
+            return True
+    logging.info('Not ignoring from chat chat {peer_entity}'.format(peer_entity=peer_entity))
+    return False
+
+async def build_peer_entity(peer : TelegramPeer, client : TelegramClient):
+    if peer is None:
+        return None
+    input_peer = to_telethon_input_peer(peer)
+    if input_peer is None:
+        return None
+    return await client.get_entity(input_peer)
+
+async def load_messages_from_event(
+        event: MessageDeleted.Event,
+        client : TelegramClient,
+        sqlalchemy_session : Session,
+        ignore_channels : bool,
+        ignore_groups : bool,
+        ignore_megagroups : bool,
+        ignore_gigagroups : bool,
+    ) -> Tuple[List[TelegramMessage], Select, List[int], List[int]]:
     
     logging.debug(f"Searching for messages in {event.deleted_ids}")
 
@@ -159,38 +257,38 @@ async def load_messages_from_event(event: MessageDeleted.Event, client : Telegra
     loaded_ids = [int(str(message.id)) for message in db_results]
     unloaded_ids = [msg_id for msg_id in event.deleted_ids if msg_id not in loaded_ids]
 
-    filtered_results = await filter_deleted_messages_for_event(ignore_channels, ignore_groups, client, db_results)
+    filtered_results = await filter_deleted_messages_for_event(
+        ignore_channels,
+        ignore_groups,
+        ignore_megagroups,
+        ignore_gigagroups,
+        client,
+        db_results
+    )
     
     filtered_away_ids = [int(str(message.id)) for message in db_results if message not in filtered_results]
 
     return (filtered_results, the_query, unloaded_ids, filtered_away_ids)
 
-async def filter_deleted_messages_for_event(ignore_channels, ignore_groups, client : TelegramClient, db_results : List[TelegramMessage]) -> List[TelegramMessage]:
-    
-    async def build_peer_entity(telegram_message : TelegramMessage):
-        peer : TelegramPeer = telegram_message.chat_peer
-        if peer is None:
-            return None
-        input_peer = to_telethon_input_peer(peer)
-        if input_peer is None:
-            return None
-        return await client.get_entity(input_peer)
-    
-    async def should_signal_deleted_message_for_event(telegram_message : TelegramMessage) -> bool:
-        # https://docs.telethon.dev/en/stable/concepts/chats-vs-channels.html
-        if ignore_channels:
-            peer_entity = await build_peer_entity(telegram_message)
-            # Ignore if instanceof Channel and is not a mega-group (which counts as a Channel for some reason (a horrible horrible telegram API decision))
-            if peer_entity is not None and isinstance(peer_entity, (telethon.types.PeerChannel, telethon.types.Channel)) and not peer_entity.megagroup:
-                return False
-        if ignore_groups:
-            peer_entity = await build_peer_entity(telegram_message)
-            # Ignore if instanceof Chat (for small groups) OR if is a mega-group (which counts as a Channel for some reason (a horrible horrible telegram API decision))
-            if peer_entity is not None and (isinstance(peer_entity, (telethon.types.PeerChat, telethon.types.Chat)) or (isinstance(peer_entity, (telethon.types.Channel, telethon.types.Channel)) and peer_entity.megagroup)):
-                return False
-        return True
-    
-    return [message for message in db_results if await should_signal_deleted_message_for_event(message)]
+async def filter_deleted_messages_for_event(
+        ignore_channels : bool,
+        ignore_groups : bool,
+        ignore_megagroups : bool,
+        ignore_gigagroups : bool,
+        client : TelegramClient,
+        db_results : List[TelegramMessage],
+    ) -> List[TelegramMessage]:
+    return [
+        message for message in db_results
+        if not await should_ignore_deleted_message(
+            message,
+            client,
+            ignore_channels,
+            ignore_groups,
+            ignore_megagroups,
+            ignore_gigagroups
+        )
+    ]
 
 async def clean_old_messages_loop(sqlalchemy_session_maker : sessionmaker, seconds_interval : int, ttl : timedelta, stop_event : asyncio.Event):
     logging.info('Starting Clean Old Messages Loop')
@@ -223,7 +321,7 @@ def get_base_notify_message_deletion(sqlalchemy_session_maker : sessionmaker) ->
         logging.debug("base_notify_message_deletion")
         with sqlalchemy_session_maker.begin() as session:
                 session.add(message)
-                message.deleted = True
+                message.deleted = True # type: ignore
     return base_notify_message_deletion
 
 def get_default_notify_message_deletion() -> Callable[[TelegramMessage, TelegramClient], Awaitable[Any]]:
@@ -231,8 +329,8 @@ def get_default_notify_message_deletion() -> Callable[[TelegramMessage, Telegram
         logging.debug("default_notify_message_deletion")
         await client.send_message(
             entity="me",
-            message=await format_default_message_text(client, message),
-            file=message.media
+            message=await format_default_message_text(client, message), # type: ignore
+            file=message.media # type: ignore
         )
     return default_notify_message_deletion
 
@@ -241,7 +339,7 @@ def get_default_notify_unknown_message() -> Callable[[List[int], MessageDeleted.
         logging.debug("default_notify_unknown_message")
         await client.send_message(
             entity="me",
-            message=await format_default_unknown_message_text(client, message_ids, event)
+            message=await format_default_unknown_message_text(client, message_ids, event)  # type: ignore
         )
     return default_notify_unknown_message
 
@@ -324,7 +422,7 @@ async def client_main_loop_job(stop_event, sqlalchemy_session_maker, configured_
         stop_event=stop_event
     )
 
-def create_app_and_start_jobs():
+def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
 
     loop = asyncio.events.new_event_loop()
     nest_asyncio.apply(loop)
@@ -404,7 +502,12 @@ def create_app_and_start_jobs():
         loop
     )
 
-    flask_app = create_app(client, bot, loop, sqlalchemy_session_maker)
+    flask_app = create_app(
+        client,
+        bot,
+        loop,
+        sqlalchemy_session_maker
+    )
 
     logging.info("Returning from create_app_and_start_jobs")
     return (flask_app, sync_closer)
@@ -413,7 +516,7 @@ def create_engine(database_url : str, future : bool):
     return sqlalchemy.create_engine(
         database_url,
         echo=False,
-        future=future,
+        future=future, # type: ignore
         pool_size=10,
         max_overflow=2,
         pool_recycle=300,
@@ -427,7 +530,10 @@ def create_engine(database_url : str, future : bool):
         }
     )
 
-def create_app(client : TelegramClient, bot : Union[BotAssistant, None], loop : asyncio.AbstractEventLoop, sqlalchemy_session_maker : sessionmaker) -> flask.Flask:
+def create_app(client : Union[TelegramClient, None], bot : Union[BotAssistant, None], loop : asyncio.AbstractEventLoop, sqlalchemy_session_maker : sessionmaker) -> flask.Flask:
+
+    if client is None:
+        raise ValueError('Client not initialized!')
 
     flask_app = flask.Flask(__name__)
 
@@ -459,7 +565,15 @@ def create_app(client : TelegramClient, bot : Union[BotAssistant, None], loop : 
             return flask.Response("Both code and password parameters present, but either one or the other should be present!", status=400)
         try:
             logging.info('Attempting to sign in')
-            sign_in_result = asyncio.run_coroutine_threadsafe(client.sign_in(phone_code_hash=sent_code.phone_code_hash, phone=phone, code=code, password=password), loop).result()
+            sign_in_result = asyncio.run_coroutine_threadsafe(
+                client.sign_in(
+                    phone_code_hash=sent_code.phone_code_hash,
+                    phone=phone,
+                    code=code, # type: ignore
+                    password=password, # type: ignore
+                ),
+                loop
+            ).result()
             if isinstance(sign_in_result, telethon.types.User):
                 return flask.Response(status=204)
             if isinstance(sign_in_result, telethon.types.auth.SentCode):

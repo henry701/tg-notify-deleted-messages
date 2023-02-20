@@ -5,7 +5,7 @@ from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import select
 from telethon.client.telegramclient import TelegramClient
 from telethon.events.messagedeleted import MessageDeleted
-from telethon.tl.types import InputPeerChannel, InputPeerChat, InputPeerUser, PeerChannel, PeerChat, PeerUser
+from telethon.tl.types import InputPeerChannel, InputPeerChat, InputPeerUser, PeerChannel, PeerChat, PeerUser, InputPeerSelf, InputEncryptedChat
 from packages.models.root.TelegramMessage import TelegramMessage
 from packages.models.root.TelegramPeer import TelegramPeer
 from packages.models.support.PeerType import PeerType
@@ -40,11 +40,11 @@ async def build_telegram_peer(peer : Union[PeerUser, PeerChat, PeerChannel, None
         ).scalar()
     if peer is None:
         return None
-    got_entity = (await client.get_input_entity(peer))
+    got_entity = (await client.get_entity(peer))
     tele_peer = TelegramPeer(
         peer_id = await client.get_peer_id(peer=got_entity, add_mark=False),
         type = PeerType.from_type(type(got_entity), mandatory=True),
-        access_hash = got_entity.access_hash if hasattr(got_entity, 'access_hash') else None,
+        access_hash = getattr(got_entity, 'access_hash', None),
     )
     existing_peer = await find_existing_peer(tele_peer)
     if existing_peer:
@@ -53,8 +53,8 @@ async def build_telegram_peer(peer : Union[PeerUser, PeerChat, PeerChannel, None
     sqlalchemy_session.flush()
     return await find_existing_peer(tele_peer)
 
-def to_telethon_input_peer(telegram_peer : TelegramPeer) -> Union[InputPeerUser, InputPeerChannel, InputPeerChat]:
-    return PeerType(telegram_peer.type).to_input_type(telegram_peer.peer_id, telegram_peer.access_hash)
+def to_telethon_input_peer(telegram_peer : TelegramPeer) -> Union[InputPeerUser, InputPeerChannel, InputPeerChat, InputPeerSelf, InputEncryptedChat, None]:
+    return PeerType(telegram_peer.type).to_input_type(int(str(telegram_peer.peer_id)), int(str(telegram_peer.access_hash)) if telegram_peer.access_hash else None)
 
 async def refresh_client(client : TelegramClient):
     await client.get_dialogs()

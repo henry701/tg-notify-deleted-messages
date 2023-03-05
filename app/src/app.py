@@ -278,7 +278,7 @@ async def load_messages_from_event(
     # If we know the chat where the event came from,
     # and it should be ignored, then don't even bother
     # querying the database.
-    if chat and should_ignore_message_chat(
+    if chat and await should_ignore_message_chat(
         chat,
         client,
         ignore_channels,

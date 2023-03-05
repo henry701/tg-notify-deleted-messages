@@ -66,6 +66,12 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
 
     async def on_message_deleted(event: MessageDeleted.Event):
 
+        deleted_messages_count = len(event.deleted_ids)
+
+        if deleted_messages_count == 0:
+            logging.debug("Got empty deleted message event. Returning early!")
+            return
+
         with sqlalchemy_session_maker.begin() as sqlalchemy_session:
             (messages, query, unloaded_ids, filtered_away_ids) = await load_messages_from_event(
                 event,
@@ -77,8 +83,7 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
                 ignore_gigagroups,
                 member_ignore_threshold
         )
-
-        deleted_messages_count = len(event.deleted_ids)
+        
         deleted_messages_count_str = str(deleted_messages_count)
 
         db_messages_count = len(messages)

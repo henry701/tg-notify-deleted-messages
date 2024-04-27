@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 import logging
+
+logger = logging.getLogger('tgdel-app')
+
 import functools
 import os
 import signal
@@ -42,7 +45,6 @@ from packages.models import Base
 
 from packages.bot_assistant import BotAssistant
 
-
 import nest_asyncio
 
 import asyncio
@@ -69,7 +71,7 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
         deleted_messages_count = len(event.deleted_ids)
 
         if deleted_messages_count == 0:
-            logging.debug("Got empty deleted message event. Returning early!")
+            logger.debug("Got empty deleted message event. Returning early!")
             return
 
         with sqlalchemy_session_maker.begin() as sqlalchemy_session:
@@ -92,7 +94,7 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
         filtered_away_messages_count = len(filtered_away_ids)
         filtered_away_messages_count_str = str(filtered_away_messages_count)
         
-        logging.info(
+        logger.info(
             "Got {deleted_messages_count} deleted messages. Has matching in DB: {db_messages_count}. Filtered away: {filtered_away_messages_count}".format(
                 deleted_messages_count=deleted_messages_count_str,
                 db_messages_count=db_messages_count_str,
@@ -102,7 +104,7 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
 
         if deleted_messages_count > db_messages_count + filtered_away_messages_count:
             try:
-                logging.warning(
+                logger.warning(
                     "Got {deleted_messages_count} deleted messages but only found {db_messages_count} (with {filtered_away_messages_count} filtered away) matching in database! Query: {query_str}".format(
                         deleted_messages_count=deleted_messages_count_str,
                         db_messages_count=db_messages_count_str,
@@ -111,7 +113,7 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
                     )
                 )
             except Exception as e:
-                logging.error(
+                logger.error(
                     "Error while logging missing deleted message (has {db_messages_count} of {deleted_messages_count}, with {filtered_away_messages_count} filtered away): {e}".format(
                         deleted_messages_count=deleted_messages_count_str,
                         db_messages_count=db_messages_count_str,
@@ -140,7 +142,7 @@ def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : Telegra
 
     async def on_new_message(event: NewMessage.Event):
 
-        logging.debug(f"on_new_message: {event}")
+        logger.debug(f"on_new_message: {event}")
 
         message : telethon.tl.custom.message.Message = event.message
         
@@ -272,7 +274,7 @@ async def load_messages_from_event(
         member_ignore_threshold : int,
     ) -> Tuple[List[TelegramMessage], Union[Select, None], List[int], List[int]]:
     
-    logging.debug(f"Searching for messages in {event.deleted_ids}")
+    logger.debug(f"Searching for messages in {event.deleted_ids}")
 
     chat = None
     try:
@@ -347,7 +349,7 @@ async def filter_deleted_messages_for_event(
     ]
 
 async def clean_old_messages_loop(sqlalchemy_session_maker : sessionmaker, seconds_interval : int, ttl : timedelta, stop_event : asyncio.Event):
-    logging.info('Starting Clean Old Messages Loop')
+    logger.info('Starting Clean Old Messages Loop')
     try:
         while True:
             try:
@@ -357,24 +359,24 @@ async def clean_old_messages_loop(sqlalchemy_session_maker : sessionmaker, secon
                         delete(TelegramMessage).where(TelegramMessage.timestamp < delete_from_time)
                     )
                 count = res.rowcount
-                logging.info(
+                logger.info(
                     f"Deleted {str(count)} messages older than {str(delete_from_time)} from DB. Sleeping for {seconds_interval} seconds..."
                 )
                 with contextlib.suppress(asyncio.TimeoutError):
                     await asyncio.wait_for(stop_event.wait(), seconds_interval)
                 if stop_event.is_set():
-                    logging.info('Stop event is set, breaking from Clean Old Messages Inner Loop!')
+                    logger.info('Stop event is set, breaking from Clean Old Messages Inner Loop!')
                     break
             except Exception as e:
-                logging.critical("Error on Clean Old Messages Inner Loop Handler! {e}".format(e=e))
+                logger.critical("Error on Clean Old Messages Inner Loop Handler! {e}".format(e=e))
     except Exception as e:
-        logging.critical("Error on Clean Old Messages Outer Loop Handler! {e}".format(e=e))
+        logger.critical("Error on Clean Old Messages Outer Loop Handler! {e}".format(e=e))
     finally:
-        logging.info('Exiting Clean Old Messages Loop')
+        logger.info('Exiting Clean Old Messages Loop')
 
 def get_base_notify_message_deletion(sqlalchemy_session_maker : sessionmaker) -> Callable[[TelegramMessage, TelegramClient], Awaitable[Any]]:
     async def base_notify_message_deletion(message : TelegramMessage, client : TelegramClient):
-        logging.debug("base_notify_message_deletion")
+        logger.debug("in base_notify_message_deletion")
         with sqlalchemy_session_maker.begin() as session:
                 session.add(message)
                 message.deleted = True # type: ignore
@@ -382,7 +384,7 @@ def get_base_notify_message_deletion(sqlalchemy_session_maker : sessionmaker) ->
 
 def get_default_notify_message_deletion() -> Callable[[TelegramMessage, TelegramClient], Awaitable[Any]]:
     async def default_notify_message_deletion(message : TelegramMessage, client: TelegramClient):
-        logging.debug("default_notify_message_deletion")
+        logger.debug("in default_notify_message_deletion")
         await client.send_message(
             entity="me",
             message=await format_default_message_text(client, message), # type: ignore
@@ -392,7 +394,7 @@ def get_default_notify_message_deletion() -> Callable[[TelegramMessage, Telegram
 
 def get_default_notify_unknown_message() -> Callable[[List[int], MessageDeleted.Event, TelegramClient], Awaitable[Any]]:
     async def default_notify_unknown_message(message_ids : List[int], event : MessageDeleted.Event, client: TelegramClient):
-        logging.debug("default_notify_unknown_message")
+        logger.debug("in default_notify_unknown_message")
         await client.send_message(
             entity="me",
             message=await format_default_unknown_message_text(client, message_ids, event)  # type: ignore
@@ -400,24 +402,24 @@ def get_default_notify_unknown_message() -> Callable[[List[int], MessageDeleted.
     return default_notify_unknown_message
 
 def ask_exit(signame, loop : asyncio.AbstractEventLoop, additional):
-    logging.warning("got signal %s: exiting" % signame)
+    logger.warning("got signal %s: exiting" % signame)
     if additional:
-        logging.warning("running user-provided cleanupper")
+        logger.warning("running user-provided cleanupper")
         try:
             asyncio.run_coroutine_threadsafe(additional(), loop).result()
         except RuntimeError as e:
             if "Event loop stopped before Future completed" not in str(e):
                 raise
-        logging.warning("ran user-provided cleanupper")
-    logging.warning("cancelling all tasks")
+        logger.warning("ran user-provided cleanupper")
+    logger.warning("cancelling all tasks")
     for task in asyncio.all_tasks(loop):
         task.cancel()
-    logging.warning("cancelled all tasks")
+    logger.warning("cancelled all tasks")
 
 async def make_client(alchemy_telegram_container : AlchemySessionContainer, telegram_api_id, telegram_api_hash, session_id, loop : asyncio.AbstractEventLoop):
     telegram_session = alchemy_telegram_container.new_session(session_id)
     client = TelegramClient(session=telegram_session, api_id=telegram_api_id, api_hash=telegram_api_hash, loop=loop)
-    logging.info('Connecting Telegram Client')
+    logger.info('Connecting Telegram Client')
     try:
         await client.connect()
     except AuthKeyDuplicatedError:
@@ -425,7 +427,7 @@ async def make_client(alchemy_telegram_container : AlchemySessionContainer, tele
         telegram_session = alchemy_telegram_container.new_session(session_id)
         client = TelegramClient(session=telegram_session, api_id=telegram_api_id, api_hash=telegram_api_hash)
         await client.connect()
-    logging.info('Telegram Client Connected!')
+    logger.info('Telegram Client Connected!')
     return client
 
 def add_signal_handlers(loop, closer):
@@ -436,16 +438,16 @@ def add_signal_handlers(loop, closer):
         )
 
 async def configure_bot(alchemy_telegram_container, telegram_api_id, telegram_api_hash, target_chat, session_id):
-    logging.info('Configuring Bot')
+    logger.info('Configuring Bot')
     telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     configured_notify_message_deletion = None
     configured_notify_unknown_message = None
     bot = None
     if telegram_bot_token is not None:
         if target_chat is None or target_chat == "me":
-            logging.critical('Must provide TARGET_CHAT (except "me") if you want to use bot assistant!')
+            logger.critical('Must provide TARGET_CHAT (except "me") if you want to use bot assistant!')
             exit(1)
-        logging.info('Using bot for message notification')
+        logger.info('Using bot for message notification')
         bot = BotAssistant(
             int(target_chat) if bool(strtobool(os.getenv("TARGET_CHAT_IS_ID", '0'))) else target_chat,
             telegram_api_id,
@@ -456,7 +458,7 @@ async def configure_bot(alchemy_telegram_container, telegram_api_id, telegram_ap
         await bot.__aenter__()
         configured_notify_message_deletion = bot.notify_message_deletion
         configured_notify_unknown_message = bot.notify_unknown_message
-    logging.info('Configured Bot')
+    logger.info('Configured Bot')
     return configured_notify_message_deletion,configured_notify_unknown_message,bot
 
 async def client_main_loop_job(stop_event, sqlalchemy_session_maker, configured_notify_message_deletion, configured_notify_unknown_message, client):
@@ -468,9 +470,9 @@ async def client_main_loop_job(stop_event, sqlalchemy_session_maker, configured_
     async def actual_notify_message_deletion(message : TelegramMessage, client : TelegramClient):
         await base_notify_message_deletion(message, client)
         await configured_notify_message_deletion(message, client)
-    logging.info('Adding event handlers')
+    logger.info('Adding event handlers')
     await add_event_handlers(client, sqlalchemy_session_maker, actual_notify_message_deletion, configured_notify_unknown_message)
-    logging.info('Added event handlers')
+    logger.info('Added event handlers')
     await clean_old_messages_loop(
         sqlalchemy_session_maker=sqlalchemy_session_maker,
         seconds_interval=int(os.getenv("CLEAN_OLD_MESSAGES_SECONDS_INTERVAL", 900)),
@@ -533,17 +535,17 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
     client = loop.run_until_complete(make_client(alchemy_telegram_container, telegram_api_id, telegram_api_hash, session_id, loop))
 
     def worker_function(loop : asyncio.AbstractEventLoop, sync_closer : Callable[[], Any]):
-        logging.info("Entering worker function!")
+        logger.info("Entering worker function!")
         try:
             asyncio.set_event_loop(loop)
             nonlocal stop_event
             stop_event = asyncio.Event()
             loop.run_forever()
         except Exception as e:
-            logging.critical("Error on worker function! {e}".format(e=e))
+            logger.critical("Error on worker function! {e}".format(e=e))
             sync_closer()
         finally:
-            logging.info("Exiting worker function!")
+            logger.info("Exiting worker function!")
     worker_thread = threading.Thread(target=worker_function, args=(loop, sync_closer), name='loop-app-client-bgthread')
     worker_thread.start()
 
@@ -565,10 +567,18 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
         sqlalchemy_session_maker
     )
 
-    logging.info("Returning from create_app_and_start_jobs")
+    logger.info("Returning from create_app_and_start_jobs")
     return (flask_app, sync_closer)
 
 def create_engine(database_url : str, future : bool):
+    if database_url.startswith("sqlite"):
+        return sqlalchemy.create_engine(
+            database_url,
+            echo=False,
+            future=future, # type: ignore
+            pool_recycle=300,
+            pool_pre_ping=True
+        )
     return sqlalchemy.create_engine(
         database_url,
         echo=False,
@@ -601,16 +611,16 @@ def create_app(client : Union[TelegramClient, None], bot : Union[BotAssistant, N
 
     @flask_app.route('/send_code', methods=['GET'])
     def send_code():
-        logging.info('Sending code request')
+        logger.info('Sending code request')
         nonlocal sent_code
         sent_code = asyncio.run_coroutine_threadsafe(client.send_code_request(phone=phone), loop).result()
-        logging.info('Sent code request')
+        logger.info('Sent code request')
         return flask.Response(status=204)
 
     @flask_app.route('/auth', methods=['GET'])
     def auth():
         nonlocal sent_code
-        logging.info('Auth request received')
+        logger.info('Auth request received')
         code = flask.request.args.get("code")
         password = flask.request.args.get("password")
         if not sent_code:
@@ -620,7 +630,7 @@ def create_app(client : Union[TelegramClient, None], bot : Union[BotAssistant, N
         if code and password:
             return flask.Response("Both code and password parameters present, but either one or the other should be present!", status=400)
         try:
-            logging.info('Attempting to sign in')
+            logger.info('Attempting to sign in')
             sign_in_result = asyncio.run_coroutine_threadsafe(
                 client.sign_in(
                     phone_code_hash=sent_code.phone_code_hash,
@@ -670,7 +680,7 @@ def add_informative_routes(client : TelegramClient, bot : Union[BotAssistant, No
 
     @flask_app.route('/health', methods=['GET'])
     def health():
-        logging.debug("Health endpoint called")
+        logger.debug("Health endpoint called")
         if not loop.is_running():
             return log_and_return_500("Event Loop not running")
         if client is None:
@@ -680,6 +690,7 @@ def add_informative_routes(client : TelegramClient, bot : Union[BotAssistant, No
         if not client.is_connected():
             return log_and_return_500("Client not connected")
         try:
+            logger.debug("Health endpoint called")
             with sqlalchemy_session_maker.begin() as sqlalchemy_session:
                 sqlalchemy_session.execute(
                     select(TelegramMessage).limit(1)
@@ -689,7 +700,7 @@ def add_informative_routes(client : TelegramClient, bot : Union[BotAssistant, No
         return flask.Response(status=204)
     
     def log_and_return_500(message : str):
-        logging.error(message)
+        logger.error(message)
         return flask.Response(message, status=500)
 
 def main():

@@ -20,6 +20,7 @@ PORT = "8080"
 DEFAULT_LOGGING_LEVEL = "INFO"
 ROOT_LOGGING_LEVEL = "INFO"
 SQLALCHEMY_LOGGING_LEVEL = "INFO"
+APP_LOGGING_LEVEL = "DEBUG"
 
 # How many days messages will be stored in the database
 # Warning: Database is not currently constrained by space, you need to monitor your free disk space manually!

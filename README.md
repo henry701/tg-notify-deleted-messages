@@ -38,13 +38,6 @@ variables at the system level.
 
 Attachment media is currently not working and needs to be fixed.
 
-### Preload the history when the application starts
-
-If you want to support old messages, but you start this application after those messages were sent,
-in case those messages are deleted the application will be unable to notify you about them.
-
-Preloading old messages (limited by `MESSAGES_TTL_DAYS` environment variable) would fix this issue.
-
 ### Edits
 
 Currently the application stores only the first version of the message.

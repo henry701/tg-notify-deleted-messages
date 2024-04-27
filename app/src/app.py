@@ -53,10 +53,14 @@ from distutils.util import strtobool
 
 from packages.telegram_helpers import build_telegram_peer, format_default_message_text, format_default_unknown_message_text, to_telethon_input_peer
 
+messages_ttl_delta=timedelta(days=int(os.getenv('MESSAGES_TTL_DAYS', 14)))
+
 async def add_event_handlers(client : TelegramClient, sqlalchemy_session_maker : sessionmaker, notify_message_deletion : Callable[[TelegramMessage, TelegramClient], Awaitable[Any]], notify_unknown_message : Callable[[List[int], MessageDeleted.Event, TelegramClient], Awaitable[Any]]):
-    new_message_event = events.NewMessage(incoming=True, outgoing=bool(strtobool(os.getenv('NOTIFY_OUTGOING_MESSAGES', 'True'))))
+    logger.info('Adding event handlers')
+    new_message_event = events.NewMessage(incoming=True, outgoing=True)
     client.add_event_handler(get_on_new_message(sqlalchemy_session_maker=sqlalchemy_session_maker, client=client), new_message_event)
     client.add_event_handler(get_on_message_deleted(client=client, sqlalchemy_session_maker=sqlalchemy_session_maker, notify_message_deletion=notify_message_deletion, notify_unknown_message=notify_unknown_message), events.MessageDeleted())
+    logger.info('Added event handlers')
 
 def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : sessionmaker, notify_message_deletion : Callable[[TelegramMessage, TelegramClient], Awaitable[Any]], notify_unknown_message : Callable[[List[int], MessageDeleted.Event, TelegramClient], Awaitable[Any]]):
 
@@ -65,6 +69,7 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
     ignore_megagroups = bool(strtobool(os.getenv("IGNORE_MEGAGROUPS", '0')))
     ignore_gigagroups = bool(strtobool(os.getenv("IGNORE_GIGAGROUPS", '0')))
     member_ignore_threshold = int(os.getenv("MEMBER_IGNORE_THRESHOLD", '0'))
+    should_notify_outgoing_messages=bool(strtobool(os.getenv('NOTIFY_OUTGOING_MESSAGES', 'True')))
 
     async def on_message_deleted(event: MessageDeleted.Event):
 
@@ -83,7 +88,8 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
                 ignore_groups,
                 ignore_megagroups,
                 ignore_gigagroups,
-                member_ignore_threshold
+                member_ignore_threshold,
+                should_notify_outgoing_messages
         )
         
         deleted_messages_count_str = str(deleted_messages_count)
@@ -142,7 +148,11 @@ def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : Telegra
 
     async def on_new_message(event: NewMessage.Event):
 
-        logger.debug(f"on_new_message: {event}")
+        effective_level=logger.getEffectiveLevel()
+        if effective_level <= 5:
+            logger.log(5, f"on_new_message: {event}")
+        else:
+            logger.debug("in on_new_message")
 
         message : telethon.tl.custom.message.Message = event.message
         
@@ -197,10 +207,11 @@ async def should_ignore_deleted_message(
         ignore_megagroups : bool,
         ignore_gigagroups : bool,
         member_ignore_threshold : int,
+        should_notify_outgoing_messages : bool
     ) -> bool:
-    peer_entity : Union[telethon.types.User, telethon.types.Chat, telethon.types.Channel, None] = await build_peer_entity(telegram_message.chat_peer, client)
-    return await should_ignore_message_chat(
-        peer_entity,
+    chat_peer_entity : Union[telethon.types.User, telethon.types.Chat, telethon.types.Channel, None] = await build_peer_entity(telegram_message.chat_peer, client)
+    should_ignore_message_chat_result = await should_ignore_message_chat(
+        chat_peer_entity,
         client,
         ignore_channels,
         ignore_groups,
@@ -208,6 +219,14 @@ async def should_ignore_deleted_message(
         ignore_gigagroups,
         member_ignore_threshold
     )
+    if should_ignore_message_chat_result:
+        return True
+    if should_notify_outgoing_messages:
+        from_peer_entity = await build_peer_entity(telegram_message.from_peer_id, client)
+        my_user_peer_entity = await client.get_input_entity('me')
+        if from_peer_entity == my_user_peer_entity:
+            return True
+    return False
 
 # https://docs.telethon.dev/en/stable/concepts/chats-vs-channels.html
 # https://core.telegram.org/constructor/channel
@@ -272,6 +291,7 @@ async def load_messages_from_event(
         ignore_megagroups : bool,
         ignore_gigagroups : bool,
         member_ignore_threshold : int,
+        should_notify_outgoing_messages : bool
     ) -> Tuple[List[TelegramMessage], Union[Select, None], List[int], List[int]]:
     
     logger.debug(f"Searching for messages in {event.deleted_ids}")
@@ -318,6 +338,7 @@ async def load_messages_from_event(
         ignore_megagroups,
         ignore_gigagroups,
         member_ignore_threshold,
+        should_notify_outgoing_messages,
         client,
         db_results
     )
@@ -332,6 +353,7 @@ async def filter_deleted_messages_for_event(
         ignore_megagroups : bool,
         ignore_gigagroups : bool,
         member_ignore_threshold : int,
+        should_notify_outgoing_messages: bool,
         client : TelegramClient,
         db_results : List[TelegramMessage],
     ) -> List[TelegramMessage]:
@@ -344,7 +366,8 @@ async def filter_deleted_messages_for_event(
             ignore_groups,
             ignore_megagroups,
             ignore_gigagroups,
-            member_ignore_threshold
+            member_ignore_threshold,
+            should_notify_outgoing_messages
         )
     ]
 
@@ -470,13 +493,12 @@ async def client_main_loop_job(stop_event, sqlalchemy_session_maker, configured_
     async def actual_notify_message_deletion(message : TelegramMessage, client : TelegramClient):
         await base_notify_message_deletion(message, client)
         await configured_notify_message_deletion(message, client)
-    logger.info('Adding event handlers')
+    await preload_messages(client, sqlalchemy_session_maker)
     await add_event_handlers(client, sqlalchemy_session_maker, actual_notify_message_deletion, configured_notify_unknown_message)
-    logger.info('Added event handlers')
     await clean_old_messages_loop(
         sqlalchemy_session_maker=sqlalchemy_session_maker,
         seconds_interval=int(os.getenv("CLEAN_OLD_MESSAGES_SECONDS_INTERVAL", 900)),
-        ttl=timedelta(days=int(os.getenv('MESSAGES_TTL_DAYS', 14))),
+        ttl=messages_ttl_delta,
         stop_event=stop_event
     )
 
@@ -570,6 +592,19 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
     logger.info("Returning from create_app_and_start_jobs")
     return (flask_app, sync_closer)
 
+async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : sessionmaker):
+    if not client.is_connected:
+        logger.info('No client connected, skipping preloading messages')
+        return
+    iter_from_offset=datetime.now(tz=timezone.utc) - messages_ttl_delta
+    logger.info('Preloading existing messages from {iter_from_offset}'.format(iter_from_offset=iter_from_offset))
+    iterated_messages=0
+    built_on_new_message=get_on_new_message(sqlalchemy_session_maker, client)
+    for message in client.iter_messages(None, offset_date=iter_from_offset):
+        await built_on_new_message(message)
+        iterated_messages = iterated_messages + 1
+    logger.info('Preloaded existing message count: {iterated_messages}'.format(iterated_messages=iterated_messages))
+
 def create_engine(database_url : str, future : bool):
     if database_url.startswith("sqlite"):
         return sqlalchemy.create_engine(
@@ -641,6 +676,7 @@ def create_app(client : Union[TelegramClient, None], bot : Union[BotAssistant, N
                 loop
             ).result()
             if isinstance(sign_in_result, telethon.types.User):
+                # TODO: asynchronously invoke preload_messages(client, sqlalchemy_session_maker)
                 return flask.Response(status=204)
             if isinstance(sign_in_result, telethon.types.auth.SentCode):
                 sent_code = sign_in_result

@@ -1,12 +1,13 @@
-FROM python:3.9.16-alpine3.17 as base
+FROM python:3.9.16-alpine3.17 AS base
 
-FROM base as common
+FROM base AS common
+RUN apk --no-cache add bash
 RUN apk --no-cache add openssl
 RUN apk --no-cache add libffi
 ARG SUPPORTS_PGSQL=1
 RUN if [[ "$SUPPORTS_PGSQL" -eq 1 ]]; then apk --no-cache add libpq; fi
 
-FROM common as builder
+FROM common AS builder
 RUN apk --no-cache add gcc
 RUN apk --no-cache add g++
 RUN apk --no-cache add python3-dev
@@ -24,22 +25,20 @@ ARG SUPPORTS_PGSQL=1
 RUN if [[ "$SUPPORTS_PGSQL" -eq 1 ]]; then pip install --no-cache -r /usr/app/meta/requirements/pgsql.txt; fi
 RUN pip install --no-cache -r /usr/app/meta/requirements/db_cripto.txt
 RUN pip install --no-cache -r /usr/app/meta/requirements/perf.txt
-ARG SUPPORTS_SQREEN=0
-RUN if [[ "$SUPPORTS_SQREEN" -eq 1 ]]; then pip install --no-cache -r /usr/app/meta/requirements/sqreen.txt; fi
 COPY ./app/meta/monkey/. /usr/app/meta/monkey/.
 # lmao
 RUN ["sed", "-i", "s/from sqlalchemy.orm.query import _ColumnEntity/from sqlalchemy.orm.context import _ColumnEntity/g", "/usr/local/lib/python3.9/site-packages/sqlalchemy_utils/functions/orm.py"]
 # TODO: Always remember to make a pull request to the monkey'd libs, or move the monkey'd entities into their own separate packages where possible
 RUN cp -av /usr/app/meta/monkey/. /usr/local/lib/python3.9/site-packages
 
-FROM builder as full
+FROM builder AS full
 COPY ./app/src/. /usr/app/src/.
 # Default self-signed certificate just for HTTPS exposure - Should be overwritten in production, ideally
 RUN openssl req -new -x509 -keyout /usr/app/conf/server.pem -out /usr/app/conf/server.pem -days 5000 -nodes -subj "/C=US/ST=Test/L=Test/O=Test/CN=www.test.com"
 COPY ./app/conf/. /usr/app/conf/.
 RUN find /usr/app/src -type f -name '*.py' -print0 | xargs -0 dos2unix
 
-FROM common as lean
+FROM common AS lean
 
 # TODO: Copy only changed & added files
 # TODO: Don't hardcode the packages directory, make this copy be dynamic somehow
@@ -49,8 +48,8 @@ COPY --from=full /usr/app/src/. /usr/app/src/.
 COPY --from=full /usr/app/conf/. /usr/app/conf/.
 RUN mkdir -p /usr/app/state
 
-FROM lean as runner
+FROM lean AS runner
 WORKDIR /usr/app/src
 ENV PORT=443
 EXPOSE "$PORT"
-ENTRYPOINT python3 -m gunicorn --bind 0.0.0.0:$PORT wsgi:app
+ENTRYPOINT [ "/bin/bash", "-c", "exec python3 -m gunicorn --bind 0.0.0.0:\"$PORT\" wsgi:app \"${@}\"", "--" ]

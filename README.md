@@ -34,10 +34,6 @@ variables at the system level.
 
 ## Roadmap
 
-### Attachment Support
-
-Attachment media is currently not working and needs to be fixed.
-
 ### Edits
 
 Currently the application stores only the first version of the message.

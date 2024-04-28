@@ -62,7 +62,7 @@ coverage.xml
 local_settings.py
 instance/
 .webassets-cache
-*.sqlite3
+*.sqlite3*
 
 # Scrapy stuff:
 .scrapy

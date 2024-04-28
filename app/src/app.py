@@ -9,6 +9,7 @@ import functools
 import os
 import signal
 import threading
+import concurrent
 import time
 
 import flask
@@ -125,7 +126,7 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
                         db_messages_count=db_messages_count_str,
                         filtered_away_messages_count=filtered_away_messages_count_str,
                         e=e
-                    )
+                    ), exc_info=True
                 )
 
         awaitables : List[Awaitable[Any]] = []
@@ -140,11 +141,10 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
 
 def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : TelegramClient):
 
-    ignore_channels = bool(strtobool(os.getenv("IGNORE_CHANNELS", '0')))
-    ignore_groups = bool(strtobool(os.getenv("IGNORE_GROUPS", '0')))
-    ignore_megagroups = bool(strtobool(os.getenv("IGNORE_MEGAGROUPS", '0')))
-    ignore_gigagroups = bool(strtobool(os.getenv("IGNORE_GIGAGROUPS", '0')))
-    member_ignore_threshold = int(os.getenv("MEMBER_IGNORE_THRESHOLD", '0'))
+    store_message = get_store_message(
+        sqlalchemy_session_maker,
+        client
+    )
 
     async def on_new_message(event: NewMessage.Event):
 
@@ -156,48 +156,73 @@ def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : Telegra
 
         message : telethon.tl.custom.message.Message = event.message
         
-        should_ignore : bool = await should_ignore_incoming_message(
-            message,
+        await store_message(message)
+
+    return on_new_message
+
+def get_should_ignore_incoming_message(client : TelegramClient):
+
+    ignore_channels = bool(strtobool(os.getenv("IGNORE_CHANNELS", '0')))
+    ignore_groups = bool(strtobool(os.getenv("IGNORE_GROUPS", '0')))
+    ignore_megagroups = bool(strtobool(os.getenv("IGNORE_MEGAGROUPS", '0')))
+    ignore_gigagroups = bool(strtobool(os.getenv("IGNORE_GIGAGROUPS", '0')))
+    member_ignore_threshold = int(os.getenv("MEMBER_IGNORE_THRESHOLD", '0'))
+
+    async def should_ignore_incoming_message(message : telethon.tl.custom.message.Message) -> bool:
+        chat : Union[telethon.types.User, telethon.types.Chat, telethon.types.Channel, None] = await message.get_chat() # type: ignore
+        return await should_ignore_message_chat(
+            chat,
             client,
             ignore_channels,
             ignore_groups,
             ignore_megagroups,
             ignore_gigagroups,
-            member_ignore_threshold,
+            member_ignore_threshold
         )
+    return should_ignore_incoming_message
+
+def get_store_message(
+    sqlalchemy_session_maker : sessionmaker,
+    client : TelegramClient
+):
+    
+    should_ignore_incoming_message = get_should_ignore_incoming_message(client)
+
+    file_size_threshold = int(os.getenv("MEDIA_FILE_SIZE_THRESHOLD", '0'))
+
+    async def store_message(
+        message : telethon.tl.custom.message.Message,
+    ):
+        should_ignore : bool = await should_ignore_incoming_message(message)
+
+        if should_ignore:
+            return False
+        
+        built_from_peer = None
+        with sqlalchemy_session_maker.begin() as sqlalchemy_session:
+            built_from_peer = await build_telegram_peer(message.from_id, client, sqlalchemy_session)
+
+        built_chat_peer = None
+        with sqlalchemy_session_maker.begin() as sqlalchemy_session:
+            built_chat_peer = await build_telegram_peer(message.peer_id, client, sqlalchemy_session)
 
         with sqlalchemy_session_maker.begin() as sqlalchemy_session:
+            blob = None
+            if message.media and message.file and message.file.size and (file_size_threshold == 0 or message.file.size < file_size_threshold):
+                blob = await message.download_media(file=bytes)
             orm_message = TelegramMessage(
                 id = message.id,
-                from_peer = await build_telegram_peer(message.from_id, client, sqlalchemy_session),
-                chat_peer = await build_telegram_peer(message.peer_id, client, sqlalchemy_session),
-                text = None if should_ignore else message.message,
-                media = None if should_ignore else message.media,
+                from_peer = built_from_peer,
+                chat_peer = built_chat_peer,
+                text = message.message,
+                media = blob,
                 timestamp = message.date
             )
             sqlalchemy_session.add(orm_message)
-
-    return on_new_message
-
-async def should_ignore_incoming_message(
-        message : telethon.tl.custom.message.Message,
-        client : TelegramClient,
-        ignore_channels : bool,
-        ignore_groups : bool,
-        ignore_megagroups : bool,
-        ignore_gigagroups : bool,
-        member_ignore_threshold : int,
-    ) -> bool:
-    chat : Union[telethon.types.User, telethon.types.Chat, telethon.types.Channel, None] = await message.get_chat() # type: ignore
-    return await should_ignore_message_chat(
-        chat,
-        client,
-        ignore_channels,
-        ignore_groups,
-        ignore_megagroups,
-        ignore_gigagroups,
-        member_ignore_threshold
-    )
+        
+        return True
+    
+    return store_message
 
 async def should_ignore_deleted_message(
         telegram_message : TelegramMessage,
@@ -222,7 +247,7 @@ async def should_ignore_deleted_message(
     if should_ignore_message_chat_result:
         return True
     if should_notify_outgoing_messages:
-        from_peer_entity = await build_peer_entity(telegram_message.from_peer_id, client)
+        from_peer_entity = await build_peer_entity(telegram_message.from_peer, client)
         my_user_peer_entity = await client.get_input_entity('me')
         if from_peer_entity == my_user_peer_entity:
             return True
@@ -302,11 +327,37 @@ async def load_messages_from_event(
         chat = await client.get_entity(input_chat) if input_chat else None
     except ValueError:
         pass
+
+    return await load_messages_by_parameters(
+        event.deleted_ids,
+        chat,
+        client,
+        sqlalchemy_session,
+        ignore_channels,
+        ignore_groups,
+        ignore_megagroups,
+        ignore_gigagroups,
+        member_ignore_threshold,
+        should_notify_outgoing_messages
+    )
+
+async def load_messages_by_parameters(
+    ids : List[int],
+    peer_entity : Union[telethon.types.User, telethon.types.Chat, telethon.types.Channel, None],
+    client : TelegramClient,
+    sqlalchemy_session : Session,
+    ignore_channels : bool,
+    ignore_groups : bool,
+    ignore_megagroups : bool,
+    ignore_gigagroups : bool,
+    member_ignore_threshold : int,
+    should_load_outgoing_messages : bool
+):
     # If we know the chat where the event came from,
     # and it should be ignored, then don't even bother
     # querying the database.
-    if chat and await should_ignore_message_chat(
-        chat,
+    if peer_entity and await should_ignore_message_chat(
+        peer_entity,
         client,
         ignore_channels,
         ignore_groups,
@@ -314,23 +365,22 @@ async def load_messages_from_event(
         ignore_gigagroups,
         member_ignore_threshold
     ):
-        return ([], None, [], event.deleted_ids)
+        return ([], None, [], ids)
 
-    the_query = select(TelegramMessage).where(TelegramMessage.id.in_(event.deleted_ids))
+    the_query = select(TelegramMessage).where(TelegramMessage.id.in_(ids))
     
-    input_chat_id, unused = resolve_id(event.chat_id) if event.chat_id is not None else (None, None)
+    peer_entity_id = peer_entity.id if peer_entity is not None else None
     
-    if input_chat_id is not None:
-        the_query = the_query.where(TelegramMessage.chat_peer.has(TelegramPeer.peer_id == input_chat_id))
+    if peer_entity_id is not None:
+        the_query = the_query.where(TelegramMessage.chat_peer.has(TelegramPeer.peer_id == peer_entity_id))
 
-    input_chat = await event.get_input_chat()
-    chat_peer_type = PeerType.from_type(type(input_chat))
+    chat_peer_type = PeerType.from_type(type(peer_entity))
     if chat_peer_type is not None:
         the_query = the_query.where(TelegramMessage.chat_peer.has(TelegramPeer.type == chat_peer_type))
 
     db_results : List[TelegramMessage] = list(sqlalchemy_session.execute(the_query).scalars().all())
     loaded_ids = [int(str(message.id)) for message in db_results]
-    unloaded_ids = [msg_id for msg_id in event.deleted_ids if msg_id not in loaded_ids]
+    unloaded_ids = [msg_id for msg_id in ids if msg_id not in loaded_ids]
 
     filtered_results = await filter_deleted_messages_for_event(
         ignore_channels,
@@ -338,7 +388,7 @@ async def load_messages_from_event(
         ignore_megagroups,
         ignore_gigagroups,
         member_ignore_threshold,
-        should_notify_outgoing_messages,
+        should_load_outgoing_messages,
         client,
         db_results
     )
@@ -577,10 +627,20 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
     if stop_event is None:
         raise RuntimeError("Worker thread died before setting stop_event!")
 
-    asyncio.run_coroutine_threadsafe(
+    main_loop_job_future = asyncio.run_coroutine_threadsafe(
         client_main_loop_job(stop_event, sqlalchemy_session_maker, configured_notify_message_deletion, configured_notify_unknown_message, client),
         loop
     )
+
+    def handle_main_loop_job_future_end(main_inner_future : concurrent.futures.Future):
+        try:
+            main_inner_future.result()
+        except Exception as e:
+            logger.error("Error while running main job: {e}".format(e=e), exc_info=True)
+        logger.info("Main job loop finished, calling sync closer")
+        sync_closer()
+
+    main_loop_job_future.add_done_callback(handle_main_loop_job_future_end)
 
     flask_app = create_app(
         client,
@@ -593,17 +653,54 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
     return (flask_app, sync_closer)
 
 async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : sessionmaker):
-    if not client.is_connected:
-        logger.info('No client connected, skipping preloading messages')
+    if not bool(strtobool(os.getenv('PRELOAD_MESSAGES', '0'))):
+        logger.info('PRELOAD_MESSAGES is disabled, skipping preloading messages')
+        return
+    if not client.is_connected or not await client.is_user_authorized():
+        logger.info('No client connected and authorized, skipping preloading messages')
         return
     iter_from_offset=datetime.now(tz=timezone.utc) - messages_ttl_delta
     logger.info('Preloading existing messages from {iter_from_offset}'.format(iter_from_offset=iter_from_offset))
     iterated_messages=0
-    built_on_new_message=get_on_new_message(sqlalchemy_session_maker, client)
-    for message in client.iter_messages(None, offset_date=iter_from_offset):
-        await built_on_new_message(message)
-        iterated_messages = iterated_messages + 1
-    logger.info('Preloaded existing message count: {iterated_messages}'.format(iterated_messages=iterated_messages))
+    preloaded_messages=0
+    store_message = get_store_message(sqlalchemy_session_maker, client)
+    should_ignore_incoming_message = get_should_ignore_incoming_message(client)
+    message : telethon.tl.custom.message.Message = None
+    dialog : telethon.tl.custom.dialog.Dialog = None
+    async for dialog in client.iter_dialogs():
+        iterated_messages_this_dialog=0
+        preloaded_messages_this_dialog=0
+        logger.info('Preloading existing messages for dialog={dialog}'.format(dialog=dialog.id))
+        peer = dialog.input_entity
+        async for message in client.iter_messages(peer, offset_date=iter_from_offset, reverse=True):
+            iterated_messages = iterated_messages + 1
+            iterated_messages_this_dialog = iterated_messages_this_dialog + 1
+            if await should_ignore_incoming_message(message):
+                continue
+            with sqlalchemy_session_maker.begin() as sqlalchemy_session:
+                (messages, query, unloaded_ids, filtered_away_ids) = await load_messages_by_parameters(
+                    [ message.id ],
+                    await message.get_chat(),
+                    client,
+                    sqlalchemy_session,
+                    False,
+                    False,
+                    False,
+                    False,
+                    0,
+                    True
+                )
+                if len(messages) > 0:
+                    logger.info('Stopping preloading for dialog={dialog}, found a message that exists in the database. Timestamp: {message_timestamp}'.format(dialog=dialog.id, message_timestamp=message.date))
+                    break
+                if iterated_messages % 15 == 0:
+                    logger.info('Preloading still in progress for dialog={dialog}. Date so far: {message_timestamp}. Dialog messages preloaded so far: {preloaded_messages_this_dialog}. Total messages preloaded so far: {preloaded_messages}'.format(
+                        dialog=dialog.id, message_timestamp=message.date, preloaded_messages_this_dialog=preloaded_messages_this_dialog, preloaded_messages=preloaded_messages))
+            if await store_message(message):
+                preloaded_messages = preloaded_messages + 1
+                preloaded_messages_this_dialog = preloaded_messages_this_dialog + 1
+        logger.info('Preloaded {preloaded_messages_this_dialog} existing messages for dialog={dialog}'.format(dialog=dialog.id, preloaded_messages_this_dialog=preloaded_messages_this_dialog))
+    logger.info('Preloaded existing message count: {preloaded_messages} of {iterated_messages} iterated'.format(preloaded_messages=preloaded_messages, iterated_messages=iterated_messages))
 
 def create_engine(database_url : str, future : bool):
     if database_url.startswith("sqlite"):
@@ -611,8 +708,8 @@ def create_engine(database_url : str, future : bool):
             database_url,
             echo=False,
             future=future, # type: ignore
-            pool_recycle=300,
-            pool_pre_ping=True
+            pool_pre_ping=True,
+            connect_args={'timeout': 30}
         )
     return sqlalchemy.create_engine(
         database_url,
@@ -676,7 +773,13 @@ def create_app(client : Union[TelegramClient, None], bot : Union[BotAssistant, N
                 loop
             ).result()
             if isinstance(sign_in_result, telethon.types.User):
-                # TODO: asynchronously invoke preload_messages(client, sqlalchemy_session_maker)
+                preload_future = asyncio.run_coroutine_threadsafe(preload_messages(client, sqlalchemy_session_maker), loop)
+                def handle_preload_result(preload_inner_future : concurrent.futures.Future):
+                    try:
+                        preload_inner_future.result()
+                    except Exception as e:
+                        logger.error("Error while preloading after login: {e}".format(e=e), exc_info=True)
+                preload_future.add_done_callback(handle_preload_result)
                 return flask.Response(status=204)
             if isinstance(sign_in_result, telethon.types.auth.SentCode):
                 sent_code = sign_in_result
@@ -736,7 +839,7 @@ def add_informative_routes(client : TelegramClient, bot : Union[BotAssistant, No
         return flask.Response(status=204)
     
     def log_and_return_500(message : str):
-        logger.error(message)
+        logger.error(message, exc_info=True)
         return flask.Response(message, status=500)
 
 def main():

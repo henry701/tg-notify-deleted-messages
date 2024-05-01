@@ -829,15 +829,26 @@ def add_informative_routes(client : TelegramClient, bot : Union[BotAssistant, No
         if not client.is_connected():
             return log_and_return_500("Client not connected")
         try:
-            logger.debug("Health endpoint called")
+            logger.debug("Querying database on health endpoint")
             with sqlalchemy_session_maker.begin() as sqlalchemy_session:
                 sqlalchemy_session.execute(
                     select(TelegramMessage).limit(1)
                 )
         except Exception as e:
             return log_and_return_500("Database Error on health query: {e}".format(e=e))
+        logger.debug("Checking Telegram Client Communication")
+        try:
+            asyncio.run_coroutine_threadsafe(client.is_user_authorized(), loop).result()
+        except Exception as e:
+            log_and_return_500("Telegram Error while checking Telegram Client Communication: {e}".format(e=e))
+        if bot is not None and bot.client is not None and bot.client.is_connected():
+            logger.debug("Checking Telegram Bot Communication")
+            try:
+                asyncio.run_coroutine_threadsafe(bot.client.is_user_authorized(), loop).result()
+            except Exception as e:
+                log_and_return_500("Telegram Error while checking Telegram Bot Communication: {e}".format(e=e))
         return flask.Response(status=204)
-    
+
     def log_and_return_500(message : str):
         logger.error(message, exc_info=True)
         return flask.Response(message, status=500)

@@ -3,6 +3,8 @@
 
 import logging
 
+import sys
+
 logger = logging.getLogger('tgdel-app')
 
 import functools
@@ -468,25 +470,29 @@ def get_default_notify_unknown_message() -> Callable[[List[int], MessageDeleted.
         )
     return default_notify_unknown_message
 
-def ask_exit(signame, loop : asyncio.AbstractEventLoop, additional):
-    logger.warning("got signal %s: exiting" % signame)
+def ask_exit(signame : Union[str, None], loop : asyncio.AbstractEventLoop, additional):
+    if signame:
+        logger.warning("[exit] Got signal %s: exiting!" % signame)
+    else:
+        logger.info("[exit] Gracefully exiting, called from code!")
     if additional:
-        logger.warning("running user-provided cleanupper")
+        logger.info("[exit] Running user-provided cleanupper")
         try:
             loop.run_until_complete(additional())
         except RuntimeError as e:
-            logger.error("Error while running user-provided cleanupper", exc_info=True)
             if "Event loop stopped before Future completed" not in str(e):
-                raise
-        logger.warning("ran user-provided cleanupper")
+                logger.error("[exit] Error while running user-provided cleanupper", exc_info=True)
+        else:
+            logger.info("[exit] Successfully ran user-provided cleanupper")
     all_tasks = asyncio.all_tasks(loop)
     tasklen = len(all_tasks)
     if tasklen > 0:
-        logger.warning(f"cancelling all {tasklen} tasks", tasklen=tasklen)
+        logger.warning(f"[exit] Cancelling all remaining {tasklen} asyncio tasks!", tasklen=tasklen)
         for task in all_tasks:
             task.cancel()
-        logger.warning(f"cancelled all {tasklen} tasks", tasklen=tasklen)
-    logger.info("Bye bye! Gracefully exited.")
+        logger.warning(f"[exit] Cancelled all remaining {tasklen} asyncio tasks!", tasklen=tasklen)
+    logger.info("[exit] Bye bye! Gracefully exited.")
+    sys.exit(0)
 
 async def make_client(alchemy_telegram_container : AlchemySessionContainer, telegram_api_id, telegram_api_hash, session_id, loop : asyncio.AbstractEventLoop):
     
@@ -610,7 +616,7 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
         await asyncio.gather(*close_coros)
     
     def sync_closer():
-        ask_exit('NO-SIGNAL-EXTERNAL', loop, closer)
+        ask_exit(None, loop, closer)
 
     add_signal_handlers(loop, closer)
 
@@ -727,6 +733,16 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
     iterated_messages=0
     preloaded_messages=0
 
+    async def preload_messages_status_loop():
+        while True:
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                return
+            logger.info('Preloading still in progress. Total so far: {preloaded_messages} preloaded, {iterated_messages} iterated'.format(preloaded_messages=preloaded_messages, iterated_messages=iterated_messages))
+
+    preload_messages_status_task = asyncio.create_task(preload_messages_status_loop())
+
     store_message_if_not_exists = get_store_message_if_not_exists(client, sqlalchemy_session_maker)
 
     async def preload_messages_for_dialog(dialog):
@@ -744,9 +760,6 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
             nonlocal preloaded_messages
             iterated_messages = iterated_messages + 1
             iterated_messages_this_dialog = iterated_messages_this_dialog + 1
-            if iterated_messages % 15 == 0:
-                    logger.info('Preloading still in progress for dialog={dialog}. Date so far: {message_timestamp}. Dialog messages preloaded so far: {preloaded_messages_this_dialog}. Total messages preloaded so far: {preloaded_messages}'.format(
-                        dialog=dialog.id, message_timestamp=message.date, preloaded_messages_this_dialog=preloaded_messages_this_dialog, preloaded_messages=preloaded_messages))
             message_result = await store_message_if_not_exists(message)
             if message_result is False:
                 continue
@@ -762,7 +775,8 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
     if len(dialog_coros) > 0:
         await gather_with_concurrency(int(os.getenv("PRELOAD_MESSAGES_DIALOG_CONCURRENCY", '8')), *dialog_coros)
 
-    logger.info('Preloaded existing message count: {preloaded_messages} of {iterated_messages} iterated'.format(preloaded_messages=preloaded_messages, iterated_messages=iterated_messages))
+    preload_messages_status_task.cancel()
+    logger.info('Preloading finished! Existing message count: {preloaded_messages}. Total messages iterated: {iterated_messages}'.format(preloaded_messages=preloaded_messages, iterated_messages=iterated_messages))
 
 async def gather_with_concurrency(n, *coros):
     semaphore = asyncio.Semaphore(n)

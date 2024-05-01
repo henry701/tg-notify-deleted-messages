@@ -12,11 +12,12 @@ import threading
 import concurrent
 import time
 
+from tenacity import retry, retry_if_exception_type, stop_after_attempt
+
 import flask
 
 from sqlalchemy.sql.selectable import Select
 from telethon.errors.rpcerrorlist import AuthKeyDuplicatedError
-from telethon.utils import resolve_id
 from packages.db_helpers import create_database, get_db_url
 
 from packages.env_helpers import require_env
@@ -72,6 +73,7 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
     member_ignore_threshold = int(os.getenv("MEMBER_IGNORE_THRESHOLD", '0'))
     should_notify_outgoing_messages=bool(strtobool(os.getenv('NOTIFY_OUTGOING_MESSAGES', 'True')))
 
+    @retry(retry=retry_if_exception_type((IOError, sqlalchemy.exc.DBAPIError)), stop=stop_after_attempt(3))
     async def on_message_deleted(event: MessageDeleted.Event):
 
         deleted_messages_count = len(event.deleted_ids)
@@ -146,6 +148,7 @@ def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : Telegra
         client
     )
 
+    @retry(retry=retry_if_exception_type((IOError, sqlalchemy.exc.DBAPIError)), stop=stop_after_attempt(3))
     async def on_new_message(event: NewMessage.Event):
 
         effective_level=logger.getEffectiveLevel()
@@ -653,20 +656,52 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
     return (flask_app, sync_closer)
 
 async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : sessionmaker):
+
     if not bool(strtobool(os.getenv('PRELOAD_MESSAGES', '0'))):
         logger.info('PRELOAD_MESSAGES is disabled, skipping preloading messages')
         return
+    
     if not client.is_connected or not await client.is_user_authorized():
         logger.info('No client connected and authorized, skipping preloading messages')
         return
+    
     iter_from_offset=datetime.now(tz=timezone.utc) - messages_ttl_delta
     logger.info('Preloading existing messages from {iter_from_offset}'.format(iter_from_offset=iter_from_offset))
+
     iterated_messages=0
     preloaded_messages=0
+
     store_message = get_store_message(sqlalchemy_session_maker, client)
     should_ignore_incoming_message = get_should_ignore_incoming_message(client)
+
     message : telethon.tl.custom.message.Message = None
     dialog : telethon.tl.custom.dialog.Dialog = None
+
+    @retry(retry=retry_if_exception_type((IOError, sqlalchemy.exc.DBAPIError)), stop=stop_after_attempt(3))
+    async def preload_message():
+        if await should_ignore_incoming_message(message):
+            return False
+        with sqlalchemy_session_maker.begin() as sqlalchemy_session:
+            (messages, query, unloaded_ids, filtered_away_ids) = await load_messages_by_parameters(
+                [ message.id ],
+                await message.get_chat(),
+                client,
+                sqlalchemy_session,
+                False,
+                False,
+                False,
+                False,
+                0,
+                True
+            )
+            if len(messages) > 0:
+                logger.info('Stopping preloading for dialog={dialog}, found a message that exists in the database. Timestamp: {message_timestamp}'.format(dialog=dialog.id, message_timestamp=message.date))
+                return None
+            if iterated_messages % 15 == 0:
+                logger.info('Preloading still in progress for dialog={dialog}. Date so far: {message_timestamp}. Dialog messages preloaded so far: {preloaded_messages_this_dialog}. Total messages preloaded so far: {preloaded_messages}'.format(
+                    dialog=dialog.id, message_timestamp=message.date, preloaded_messages_this_dialog=preloaded_messages_this_dialog, preloaded_messages=preloaded_messages))
+        return await store_message(message)
+    
     async for dialog in client.iter_dialogs():
         iterated_messages_this_dialog=0
         preloaded_messages_this_dialog=0
@@ -675,30 +710,13 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
         async for message in client.iter_messages(peer, offset_date=iter_from_offset, reverse=True):
             iterated_messages = iterated_messages + 1
             iterated_messages_this_dialog = iterated_messages_this_dialog + 1
-            if await should_ignore_incoming_message(message):
+            message_result = preload_message(message)
+            if message_result is None:
+                break
+            if message_result is False:
                 continue
-            with sqlalchemy_session_maker.begin() as sqlalchemy_session:
-                (messages, query, unloaded_ids, filtered_away_ids) = await load_messages_by_parameters(
-                    [ message.id ],
-                    await message.get_chat(),
-                    client,
-                    sqlalchemy_session,
-                    False,
-                    False,
-                    False,
-                    False,
-                    0,
-                    True
-                )
-                if len(messages) > 0:
-                    logger.info('Stopping preloading for dialog={dialog}, found a message that exists in the database. Timestamp: {message_timestamp}'.format(dialog=dialog.id, message_timestamp=message.date))
-                    break
-                if iterated_messages % 15 == 0:
-                    logger.info('Preloading still in progress for dialog={dialog}. Date so far: {message_timestamp}. Dialog messages preloaded so far: {preloaded_messages_this_dialog}. Total messages preloaded so far: {preloaded_messages}'.format(
-                        dialog=dialog.id, message_timestamp=message.date, preloaded_messages_this_dialog=preloaded_messages_this_dialog, preloaded_messages=preloaded_messages))
-            if await store_message(message):
-                preloaded_messages = preloaded_messages + 1
-                preloaded_messages_this_dialog = preloaded_messages_this_dialog + 1
+            preloaded_messages = preloaded_messages + 1
+            preloaded_messages_this_dialog = preloaded_messages_this_dialog + 1
         logger.info('Preloaded {preloaded_messages_this_dialog} existing messages for dialog={dialog}'.format(dialog=dialog.id, preloaded_messages_this_dialog=preloaded_messages_this_dialog))
     logger.info('Preloaded existing message count: {preloaded_messages} of {iterated_messages} iterated'.format(preloaded_messages=preloaded_messages, iterated_messages=iterated_messages))
 

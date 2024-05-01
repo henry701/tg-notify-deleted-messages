@@ -163,17 +163,20 @@ def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : Telegra
 
     return on_new_message
 
-def get_should_ignore_incoming_message(client : TelegramClient):
+def get_should_ignore_message(client : TelegramClient):
+    should_ignore_message_chat = get_should_ignore_message_chat(client)
+    async def should_ignore_message(message : telethon.tl.custom.message.Message) -> bool:
+        return await should_ignore_message_chat(await message.get_chat())
+    return should_ignore_message
 
+def get_should_ignore_message_chat(client : TelegramClient):
     ignore_channels = bool(strtobool(os.getenv("IGNORE_CHANNELS", '0')))
     ignore_groups = bool(strtobool(os.getenv("IGNORE_GROUPS", '0')))
     ignore_megagroups = bool(strtobool(os.getenv("IGNORE_MEGAGROUPS", '0')))
     ignore_gigagroups = bool(strtobool(os.getenv("IGNORE_GIGAGROUPS", '0')))
     member_ignore_threshold = int(os.getenv("MEMBER_IGNORE_THRESHOLD", '0'))
-
-    async def should_ignore_incoming_message(message : telethon.tl.custom.message.Message) -> bool:
-        chat : Union[telethon.types.User, telethon.types.Chat, telethon.types.Channel, None] = await message.get_chat() # type: ignore
-        return await should_ignore_message_chat(
+    async def should_ignore_message_chat(chat : Union[telethon.types.User, telethon.types.Chat, telethon.types.Channel, None]) -> bool:
+        return await raw_should_ignore_message_chat(
             chat,
             client,
             ignore_channels,
@@ -182,76 +185,11 @@ def get_should_ignore_incoming_message(client : TelegramClient):
             ignore_gigagroups,
             member_ignore_threshold
         )
-    return should_ignore_incoming_message
-
-
-download_semaphore = asyncio.Semaphore(int(os.getenv("MEDIA_DOWNLOADS_CONCURRENCY", '1')))
-file_size_threshold = int(os.getenv("MEDIA_FILE_SIZE_THRESHOLD", '0'))
-@retry(retry=retry_if_exception_type(IOError), stop=stop_after_attempt(3))
-async def get_message_media_blob(message : telethon.tl.custom.message.Message):
-    if not message or not message.media or not message.file or not message.file.size or (file_size_threshold > 0 and message.file.size < file_size_threshold):
-        return None
-    async with download_semaphore:
-        return await message.download_media(file=bytes)
-
-def get_store_message(
-    sqlalchemy_session_maker : sessionmaker,
-    client : TelegramClient
-):
-    should_ignore_incoming_message = get_should_ignore_incoming_message(client)
-    @retry(retry=retry_if_exception_type((IOError, sqlalchemy.exc.DBAPIError)), stop=stop_after_attempt(3))
-    async def store_message(message : telethon.tl.custom.message.Message):
-        should_ignore : bool = await should_ignore_incoming_message(message)
-        if should_ignore:
-            return False
-        built_from_peer = await build_telegram_peer(message.from_id, client, sqlalchemy_session_maker)
-        built_chat_peer = await build_telegram_peer(message.peer_id, client, sqlalchemy_session_maker)
-        blob = await get_message_media_blob(message)
-        with sqlalchemy_session_maker.begin() as sqlalchemy_session:
-            orm_message = TelegramMessage(
-                id = message.id,
-                from_peer = built_from_peer,
-                chat_peer = built_chat_peer,
-                text = message.message,
-                media = blob,
-                timestamp = message.date
-            )
-            sqlalchemy_session.merge(orm_message)
-        return True
-    return store_message
-
-async def should_ignore_deleted_message(
-        telegram_message : TelegramMessage,
-        client : TelegramClient,
-        ignore_channels : bool,
-        ignore_groups : bool,
-        ignore_megagroups : bool,
-        ignore_gigagroups : bool,
-        member_ignore_threshold : int,
-        should_notify_outgoing_messages : bool
-    ) -> bool:
-    chat_peer_entity : Union[telethon.types.User, telethon.types.Chat, telethon.types.Channel, None] = await build_peer_entity(telegram_message.chat_peer, client)
-    should_ignore_message_chat_result = await should_ignore_message_chat(
-        chat_peer_entity,
-        client,
-        ignore_channels,
-        ignore_groups,
-        ignore_megagroups,
-        ignore_gigagroups,
-        member_ignore_threshold
-    )
-    if should_ignore_message_chat_result:
-        return True
-    if should_notify_outgoing_messages:
-        from_peer_entity = await build_peer_entity(telegram_message.from_peer, client)
-        my_user_peer_entity = await client.get_input_entity('me')
-        if from_peer_entity == my_user_peer_entity:
-            return True
-    return False
+    return should_ignore_message_chat
 
 # https://docs.telethon.dev/en/stable/concepts/chats-vs-channels.html
 # https://core.telegram.org/constructor/channel
-async def should_ignore_message_chat(
+async def raw_should_ignore_message_chat(
         peer_entity : Union[telethon.types.User, telethon.types.Chat, telethon.types.Channel, None],
         client : TelegramClient,
         ignore_channels : bool,
@@ -259,7 +197,7 @@ async def should_ignore_message_chat(
         ignore_megagroups : bool,
         ignore_gigagroups : bool,
         member_ignore_threshold : int,
-    ):
+    ) -> bool:
     if peer_entity is None:
         return False
     if ignore_channels:
@@ -292,6 +230,71 @@ async def should_ignore_message_chat(
         if isinstance(peer_entity, telethon.types.Chat):
             participants_count = peer_entity.participants_count
         if participants_count and participants_count >= member_ignore_threshold:
+            return True
+    return False
+
+
+download_semaphore = asyncio.Semaphore(int(os.getenv("MEDIA_DOWNLOADS_CONCURRENCY", '1')))
+file_size_threshold = int(os.getenv("MEDIA_FILE_SIZE_THRESHOLD", '0'))
+@retry(retry=retry_if_exception_type(IOError), stop=stop_after_attempt(3))
+async def get_message_media_blob(message : telethon.tl.custom.message.Message):
+    if not message or not message.media or not message.file or not message.file.size or (file_size_threshold > 0 and message.file.size < file_size_threshold):
+        return None
+    async with download_semaphore:
+        return await message.download_media(file=bytes)
+
+def get_store_message(
+    sqlalchemy_session_maker : sessionmaker,
+    client : TelegramClient
+):
+    should_ignore_message = get_should_ignore_message(client)
+    @retry(retry=retry_if_exception_type((IOError, sqlalchemy.exc.DBAPIError)), stop=stop_after_attempt(3))
+    async def store_message(message : telethon.tl.custom.message.Message):
+        should_ignore : bool = await should_ignore_message(message)
+        if should_ignore:
+            return False
+        built_from_peer = await build_telegram_peer(message.from_id, client, sqlalchemy_session_maker)
+        built_chat_peer = await build_telegram_peer(message.peer_id, client, sqlalchemy_session_maker)
+        blob = await get_message_media_blob(message)
+        with sqlalchemy_session_maker.begin() as sqlalchemy_session:
+            orm_message = TelegramMessage(
+                id = message.id,
+                from_peer = built_from_peer,
+                chat_peer = built_chat_peer,
+                text = message.message,
+                media = blob,
+                timestamp = message.date
+            )
+            sqlalchemy_session.merge(orm_message)
+        return True
+    return store_message
+
+async def should_ignore_deleted_message(
+        telegram_message : TelegramMessage,
+        client : TelegramClient,
+        ignore_channels : bool,
+        ignore_groups : bool,
+        ignore_megagroups : bool,
+        ignore_gigagroups : bool,
+        member_ignore_threshold : int,
+        should_notify_outgoing_messages : bool
+    ) -> bool:
+    chat_peer_entity : Union[telethon.types.User, telethon.types.Chat, telethon.types.Channel, None] = await build_peer_entity(telegram_message.chat_peer, client)
+    should_ignore_message_chat_result = await raw_should_ignore_message_chat(
+        chat_peer_entity,
+        client,
+        ignore_channels,
+        ignore_groups,
+        ignore_megagroups,
+        ignore_gigagroups,
+        member_ignore_threshold
+    )
+    if should_ignore_message_chat_result:
+        return True
+    if should_notify_outgoing_messages:
+        from_peer_entity = await build_peer_entity(telegram_message.from_peer, client)
+        my_user_peer_entity = await client.get_input_entity('me')
+        if from_peer_entity == my_user_peer_entity:
             return True
     return False
 
@@ -352,7 +355,7 @@ async def load_messages_by_parameters(
     # If we know the chat where the event came from,
     # and it should be ignored, then don't even bother
     # querying the database.
-    if peer_entity and await should_ignore_message_chat(
+    if peer_entity and await raw_should_ignore_message_chat(
         peer_entity,
         client,
         ignore_channels,
@@ -692,10 +695,10 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
 
 def get_store_message_if_not_exists(client : TelegramClient, sqlalchemy_session_maker : sessionmaker):
     store_message = get_store_message(sqlalchemy_session_maker, client)
-    should_ignore_incoming_message = get_should_ignore_incoming_message(client)
+    should_ignore_message = get_should_ignore_message(client)
     @retry(retry=retry_if_exception_type((IOError, sqlalchemy.exc.DBAPIError)), stop=stop_after_attempt(3))
     async def store_message_if_not_exists(message : telethon.tl.custom.message.Message):
-        if await should_ignore_incoming_message(message):
+        if await should_ignore_message(message):
             return False
         peer_entity = await message.get_chat()
         with sqlalchemy_session_maker.begin() as sqlalchemy_session:
@@ -744,18 +747,24 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
     preload_messages_status_task = asyncio.create_task(preload_messages_status_loop())
 
     store_message_if_not_exists = get_store_message_if_not_exists(client, sqlalchemy_session_maker)
+    should_ignore_message_chat = get_should_ignore_message_chat(client)
 
     async def preload_messages_for_dialog(dialog):
 
         logger.info('Preloading existing messages for dialog={dialog}'.format(dialog=dialog.id))
-        
+
         peer = dialog.input_entity
-            
+        full_peer = await client.get_entity(peer)
+
+        if await should_ignore_message_chat(full_peer):
+            logger.info('Preloading ignoring filtered dialog={dialog}'.format(dialog=dialog.id))
+            return
+
         iterated_messages_this_dialog=0
         preloaded_messages_this_dialog=0
 
         message : telethon.tl.custom.message.Message = None
-        async for message in client.iter_messages(peer, offset_date=iter_from_offset, reverse=True):
+        async for message in client.iter_messages(full_peer, offset_date=iter_from_offset, reverse=True):
             nonlocal iterated_messages
             nonlocal preloaded_messages
             iterated_messages = iterated_messages + 1

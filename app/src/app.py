@@ -12,7 +12,7 @@ import threading
 import concurrent
 import time
 
-from tenacity import retry, retry_if_exception_type, stop_after_attempt
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, retry_if_result
 
 import flask
 
@@ -891,6 +891,7 @@ def add_informative_routes(client : TelegramClient, bot : Union[BotAssistant, No
         return flask.Response(status=204)
 
     @flask_app.route('/health', methods=['GET'])
+    @retry(retry=retry_if_exception_type((IOError, sqlalchemy.exc.DBAPIError)) | retry_if_result(lambda result: isinstance(result, flask.Response) and str(result.status_code).startswith('5')), stop=stop_after_attempt(3))
     def health():
         logger.debug("Health endpoint called")
         if not loop.is_running():

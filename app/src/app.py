@@ -217,7 +217,7 @@ def get_store_message(
                 media = blob,
                 timestamp = message.date
             )
-            sqlalchemy_session.add(orm_message)
+            sqlalchemy_session.merge(orm_message)
         return True
     return store_message
 
@@ -448,7 +448,7 @@ def get_base_notify_message_deletion(sqlalchemy_session_maker : sessionmaker) ->
     async def base_notify_message_deletion(message : TelegramMessage, client : TelegramClient):
         logger.debug("in base_notify_message_deletion")
         with sqlalchemy_session_maker.begin() as session:
-                session.add(message)
+                session.merge(message)
                 message.deleted = True # type: ignore
     return base_notify_message_deletion
 
@@ -580,6 +580,7 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
         nonlocal stop_event
         nonlocal client
         nonlocal bot
+        logger.info("Inside closer()")
         if stop_event is not None:
             logger.info("Setting stop event flag")
             stop_event.set()
@@ -593,8 +594,9 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
             logger.info("Disconnecting Bot")
             await bot.__aexit__(None, None, None)
         count = 0
+        logger.info("Waiting for Asyncio to finish tasks")
         while asyncio.all_tasks(loop) and count < 10:
-            logger.info("Waiting for Asyncio to Finish Tasks")
+            logger.info("Still waiting for Asyncio to finish tasks...")
             await asyncio.sleep(1)
             count += 1
     

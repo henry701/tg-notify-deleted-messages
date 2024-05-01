@@ -51,7 +51,7 @@ async def build_telegram_peer(peer : Union[PeerUser, PeerChat, PeerChannel, None
     if existing_peer:
         return existing_peer
     with sqlalchemy_session_maker.begin() as sqlalchemy_session:
-        sqlalchemy_session.add(tele_peer)
+        sqlalchemy_session.merge(tele_peer)
     with sqlalchemy_session_maker.begin() as sqlalchemy_session:
         return await find_existing_peer(tele_peer, sqlalchemy_session)
 

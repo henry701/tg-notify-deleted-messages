@@ -137,7 +137,7 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
         if unloaded_ids and len(unloaded_ids):
             awaitables.append(notify_unknown_message(unloaded_ids, event, client))
         if len(awaitables) > 0:
-            await asyncio.gather(*awaitables)
+            await gather_with_concurrency(8, *awaitables)
 
     return on_message_deleted
 
@@ -694,8 +694,12 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
     store_message = get_store_message(sqlalchemy_session_maker, client)
     should_ignore_incoming_message = get_should_ignore_incoming_message(client)
 
-    async def preload_messages_for_peer(peer):
+    async def preload_messages_for_dialog(dialog):
 
+        logger.info('Preloading existing messages for dialog={dialog}'.format(dialog=dialog.id))
+        
+        peer = dialog.input_entity
+            
         iterated_messages_this_dialog=0
         preloaded_messages_this_dialog=0
 
@@ -739,16 +743,22 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
             preloaded_messages_this_dialog = preloaded_messages_this_dialog + 1
 
         logger.info('Preloaded {preloaded_messages_this_dialog} existing messages for dialog={dialog}'.format(dialog=dialog.id, preloaded_messages_this_dialog=preloaded_messages_this_dialog))
-
-    dialog_futures = []
+        
+    dialog_coros = []
     dialog : telethon.tl.custom.dialog.Dialog = None
     async for dialog in client.iter_dialogs():
-        logger.info('Preloading existing messages for dialog={dialog}'.format(dialog=dialog.id))
-        dialog_futures.append(preload_messages_for_peer(dialog.input_entity))
-    if len(dialog_futures) > 0:
-        await asyncio.gather(*dialog_futures)
+        dialog_coros.append(preload_messages_for_dialog(dialog))
+    if len(dialog_coros) > 0:
+        await gather_with_concurrency(8, *dialog_coros)
 
     logger.info('Preloaded existing message count: {preloaded_messages} of {iterated_messages} iterated'.format(preloaded_messages=preloaded_messages, iterated_messages=iterated_messages))
+
+async def gather_with_concurrency(n, *coros):
+    semaphore = asyncio.Semaphore(n)
+    async def sem_coro(coro):
+        async with semaphore:
+            return await coro
+    return await asyncio.gather(*(sem_coro(c) for c in coros))
 
 def create_engine(database_url : str, future : bool, pool : Union[sqlalchemy.pool.Pool, None] = None):
     if pool is not None:

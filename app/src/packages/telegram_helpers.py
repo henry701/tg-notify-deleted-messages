@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from typing import List, Union
-from sqlalchemy.orm.session import Session
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql.expression import select
 from telethon.client.telegramclient import TelegramClient
 from telethon.events.messagedeleted import MessageDeleted
@@ -31,8 +31,8 @@ async def get_mention_text(entity):
         mention_username = "UNKNOWN. Type name: " + type(entity).__name__
     return mention_username
 
-async def build_telegram_peer(peer : Union[PeerUser, PeerChat, PeerChannel, None], client : TelegramClient, sqlalchemy_session : Session) -> Union[TelegramPeer, None]:
-    async def find_existing_peer(tele_peer):
+async def build_telegram_peer(peer : Union[PeerUser, PeerChat, PeerChannel, None], client : TelegramClient, sqlalchemy_session_maker : sessionmaker) -> Union[TelegramPeer, None]:
+    async def find_existing_peer(tele_peer, sqlalchemy_session):
         return sqlalchemy_session.execute(
             select(TelegramPeer)
                 .where(TelegramPeer.peer_id == tele_peer.peer_id)
@@ -46,12 +46,14 @@ async def build_telegram_peer(peer : Union[PeerUser, PeerChat, PeerChannel, None
         type = PeerType.from_type(type(got_entity), mandatory=True),
         access_hash = getattr(got_entity, 'access_hash', None),
     )
-    existing_peer = await find_existing_peer(tele_peer)
+    with sqlalchemy_session_maker.begin() as sqlalchemy_session:
+        existing_peer = await find_existing_peer(tele_peer, sqlalchemy_session)
     if existing_peer:
         return existing_peer
-    sqlalchemy_session.add(tele_peer)
-    sqlalchemy_session.flush()
-    return await find_existing_peer(tele_peer)
+    with sqlalchemy_session_maker.begin() as sqlalchemy_session:
+        sqlalchemy_session.add(tele_peer)
+    with sqlalchemy_session_maker.begin() as sqlalchemy_session:
+        return await find_existing_peer(tele_peer, sqlalchemy_session)
 
 def to_telethon_input_peer(telegram_peer : TelegramPeer) -> Union[InputPeerUser, InputPeerChannel, InputPeerChat, InputPeerSelf, InputEncryptedChat, None]:
     return PeerType(telegram_peer.type).to_input_type(int(str(telegram_peer.peer_id)), int(str(telegram_peer.access_hash)) if telegram_peer.access_hash else None)

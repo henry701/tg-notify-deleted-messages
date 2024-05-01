@@ -188,31 +188,19 @@ def get_store_message(
     sqlalchemy_session_maker : sessionmaker,
     client : TelegramClient
 ):
-    
     should_ignore_incoming_message = get_should_ignore_incoming_message(client)
-
     file_size_threshold = int(os.getenv("MEDIA_FILE_SIZE_THRESHOLD", '0'))
-
-    async def store_message(
-        message : telethon.tl.custom.message.Message,
-    ):
+    @retry(retry=retry_if_exception_type((IOError, sqlalchemy.exc.DBAPIError)), stop=stop_after_attempt(3))
+    async def store_message(message : telethon.tl.custom.message.Message):
         should_ignore : bool = await should_ignore_incoming_message(message)
-
         if should_ignore:
             return False
-        
-        built_from_peer = None
+        built_from_peer = await build_telegram_peer(message.from_id, client, sqlalchemy_session_maker)
+        built_chat_peer = await build_telegram_peer(message.peer_id, client, sqlalchemy_session_maker)
+        blob = None
+        if message.media and message.file and message.file.size and (file_size_threshold == 0 or message.file.size < file_size_threshold):
+            blob = await message.download_media(file=bytes)
         with sqlalchemy_session_maker.begin() as sqlalchemy_session:
-            built_from_peer = await build_telegram_peer(message.from_id, client, sqlalchemy_session)
-
-        built_chat_peer = None
-        with sqlalchemy_session_maker.begin() as sqlalchemy_session:
-            built_chat_peer = await build_telegram_peer(message.peer_id, client, sqlalchemy_session)
-
-        with sqlalchemy_session_maker.begin() as sqlalchemy_session:
-            blob = None
-            if message.media and message.file and message.file.size and (file_size_threshold == 0 or message.file.size < file_size_threshold):
-                blob = await message.download_media(file=bytes)
             orm_message = TelegramMessage(
                 id = message.id,
                 from_peer = built_from_peer,
@@ -222,9 +210,7 @@ def get_store_message(
                 timestamp = message.date
             )
             sqlalchemy_session.add(orm_message)
-        
         return True
-    
     return store_message
 
 async def should_ignore_deleted_message(

@@ -144,10 +144,7 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
 
 def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : TelegramClient):
 
-    store_message = get_store_message(
-        sqlalchemy_session_maker,
-        client
-    )
+    store_message = get_store_message_if_not_exists(sqlalchemy_session_maker, client)
 
     @retry(retry=retry_if_exception_type((IOError, sqlalchemy.exc.DBAPIError)), stop=stop_after_attempt(3))
     async def on_new_message(event: NewMessage.Event):
@@ -476,15 +473,20 @@ def ask_exit(signame, loop : asyncio.AbstractEventLoop, additional):
     if additional:
         logger.warning("running user-provided cleanupper")
         try:
-            asyncio.run_coroutine_threadsafe(additional(), loop).result()
+            loop.run_until_complete(additional())
         except RuntimeError as e:
+            logger.error("Error while running user-provided cleanupper", exc_info=True)
             if "Event loop stopped before Future completed" not in str(e):
                 raise
         logger.warning("ran user-provided cleanupper")
-    logger.warning("cancelling all tasks")
-    for task in asyncio.all_tasks(loop):
-        task.cancel()
-    logger.warning("cancelled all tasks")
+    all_tasks = asyncio.all_tasks(loop)
+    tasklen = len(all_tasks)
+    if tasklen > 0:
+        logger.warning(f"cancelling all {tasklen} tasks", tasklen=tasklen)
+        for task in all_tasks:
+            task.cancel()
+        logger.warning(f"cancelled all {tasklen} tasks", tasklen=tasklen)
+    logger.info("Bye bye! Gracefully exited.")
 
 async def make_client(alchemy_telegram_container : AlchemySessionContainer, telegram_api_id, telegram_api_hash, session_id, loop : asyncio.AbstractEventLoop):
     
@@ -547,7 +549,7 @@ async def configure_bot(alchemy_telegram_container, telegram_api_id, telegram_ap
     logger.info('Configured Bot')
     return configured_notify_message_deletion,configured_notify_unknown_message,bot
 
-async def client_main_loop_job(stop_event, sqlalchemy_session_maker, configured_notify_message_deletion, configured_notify_unknown_message, client):
+async def client_main_loop_job(stop_event : asyncio.Event, sqlalchemy_session_maker : sessionmaker, configured_notify_message_deletion, configured_notify_unknown_message, client : TelegramClient):
     if not configured_notify_message_deletion:
         configured_notify_message_deletion = get_default_notify_message_deletion()
     if not configured_notify_unknown_message:
@@ -556,16 +558,21 @@ async def client_main_loop_job(stop_event, sqlalchemy_session_maker, configured_
     async def actual_notify_message_deletion(message : TelegramMessage, client : TelegramClient):
         await base_notify_message_deletion(message, client)
         await configured_notify_message_deletion(message, client)
-    add_event_handlers_awaitable = add_event_handlers(client, sqlalchemy_session_maker, actual_notify_message_deletion, configured_notify_unknown_message)
-    preload_messages_awaitable = preload_messages(client, sqlalchemy_session_maker)
-    old_messages_clean_loop_awaitable = clean_old_messages_loop(
+    add_event_handlers_task = asyncio.create_task(add_event_handlers(client, sqlalchemy_session_maker, actual_notify_message_deletion, configured_notify_unknown_message))
+    preload_messages_task = asyncio.create_task(preload_messages(client, sqlalchemy_session_maker))
+    old_messages_clean_loop_coro = clean_old_messages_loop(
         sqlalchemy_session_maker=sqlalchemy_session_maker,
         seconds_interval=int(os.getenv("CLEAN_OLD_MESSAGES_SECONDS_INTERVAL", 900)),
         ttl=messages_ttl_delta,
         stop_event=stop_event
     )
-    await asyncio.gather(add_event_handlers_awaitable, preload_messages_awaitable)
-    await old_messages_clean_loop_awaitable
+    stop_event_task = asyncio.create_task(stop_event.wait())
+    def on_stop(fut):
+        add_event_handlers_task.cancel()
+        preload_messages_task.cancel()
+    stop_event_task.add_done_callback(on_stop)
+    await asyncio.gather(add_event_handlers_task, preload_messages_task)
+    await old_messages_clean_loop_coro
 
 def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
 
@@ -576,11 +583,18 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
     client : Union[TelegramClient, None] = None
     bot : Union[BotAssistant, None] = None
 
+    closer_called = False
     async def closer():
         nonlocal stop_event
         nonlocal client
         nonlocal bot
+        nonlocal closer_called
+        close_coros = []
         logger.info("Inside closer()")
+        if closer_called:
+            logger.info("Closer re-entry detected, ignoring")
+            return
+        closer_called = True
         if stop_event is not None:
             logger.info("Setting stop event flag")
             stop_event.set()
@@ -588,17 +602,12 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
             logger.info("Disconnecting Client")
             disconnecter_coro = client.disconnect()
             if disconnecter_coro is not None:
-                await disconnecter_coro
+                close_coros.append(disconnecter_coro)
             client = None
         if bot is not None:
             logger.info("Disconnecting Bot")
-            await bot.__aexit__(None, None, None)
-        count = 0
-        logger.info("Waiting for Asyncio to finish tasks")
-        while asyncio.all_tasks(loop) and count < 10:
-            logger.info("Still waiting for Asyncio to finish tasks...")
-            await asyncio.sleep(1)
-            count += 1
+            close_coros.append(bot.__aexit__(None, None, None))
+        await asyncio.gather(*close_coros)
     
     def sync_closer():
         ask_exit('NO-SIGNAL-EXTERNAL', loop, closer)
@@ -657,6 +666,8 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
         try:
             main_inner_future.result()
         except Exception as e:
+            if stop_event.is_set():
+                return
             logger.error("Error while running main job: {e}".format(e=e), exc_info=True)
         logger.info("Main job loop finished, calling sync closer")
         sync_closer()
@@ -672,6 +683,33 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
 
     logger.info("Returning from create_app_and_start_jobs")
     return (flask_app, sync_closer)
+
+def get_store_message_if_not_exists(client : TelegramClient, sqlalchemy_session_maker : sessionmaker):
+    store_message = get_store_message(sqlalchemy_session_maker, client)
+    should_ignore_incoming_message = get_should_ignore_incoming_message(client)
+    @retry(retry=retry_if_exception_type((IOError, sqlalchemy.exc.DBAPIError)), stop=stop_after_attempt(3))
+    async def store_message_if_not_exists(message : telethon.tl.custom.message.Message):
+        if await should_ignore_incoming_message(message):
+            return False
+        peer_entity = await message.get_chat()
+        with sqlalchemy_session_maker.begin() as sqlalchemy_session:
+            (messages, query, unloaded_ids, filtered_away_ids) = await load_messages_by_parameters(
+                [ message.id ],
+                peer_entity,
+                client,
+                sqlalchemy_session,
+                False,
+                False,
+                False,
+                False,
+                0,
+                True
+            )
+            # Message already exists, ignore
+            if len(messages) > 0:
+                return False
+        return await store_message(message)
+    return store_message_if_not_exists
 
 async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : sessionmaker):
 
@@ -689,8 +727,7 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
     iterated_messages=0
     preloaded_messages=0
 
-    store_message = get_store_message(sqlalchemy_session_maker, client)
-    should_ignore_incoming_message = get_should_ignore_incoming_message(client)
+    store_message_if_not_exists = get_store_message_if_not_exists(client, sqlalchemy_session_maker)
 
     async def preload_messages_for_dialog(dialog):
 
@@ -701,37 +738,18 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
         iterated_messages_this_dialog=0
         preloaded_messages_this_dialog=0
 
-        @retry(retry=retry_if_exception_type((IOError, sqlalchemy.exc.DBAPIError)), stop=stop_after_attempt(3))
-        async def preload_message(message : telethon.tl.custom.message.Message):
-            if await should_ignore_incoming_message(message):
-                return False
-            with sqlalchemy_session_maker.begin() as sqlalchemy_session:
-                (messages, query, unloaded_ids, filtered_away_ids) = await load_messages_by_parameters(
-                    [ message.id ],
-                    await message.get_chat(),
-                    client,
-                    sqlalchemy_session,
-                    False,
-                    False,
-                    False,
-                    False,
-                    0,
-                    True
-                )
-                if iterated_messages % 15 == 0:
-                    logger.info('Preloading still in progress for dialog={dialog}. Date so far: {message_timestamp}. Dialog messages preloaded so far: {preloaded_messages_this_dialog}. Total messages preloaded so far: {preloaded_messages}'.format(
-                        dialog=dialog.id, message_timestamp=message.date, preloaded_messages_this_dialog=preloaded_messages_this_dialog, preloaded_messages=preloaded_messages))
-            return await store_message(message)
-
         message : telethon.tl.custom.message.Message = None
         async for message in client.iter_messages(peer, offset_date=iter_from_offset, reverse=True):
             nonlocal iterated_messages
+            nonlocal preloaded_messages
             iterated_messages = iterated_messages + 1
             iterated_messages_this_dialog = iterated_messages_this_dialog + 1
-            message_result = await preload_message(message)
+            if iterated_messages % 15 == 0:
+                    logger.info('Preloading still in progress for dialog={dialog}. Date so far: {message_timestamp}. Dialog messages preloaded so far: {preloaded_messages_this_dialog}. Total messages preloaded so far: {preloaded_messages}'.format(
+                        dialog=dialog.id, message_timestamp=message.date, preloaded_messages_this_dialog=preloaded_messages_this_dialog, preloaded_messages=preloaded_messages))
+            message_result = await store_message_if_not_exists(message)
             if message_result is False:
                 continue
-            nonlocal preloaded_messages
             preloaded_messages = preloaded_messages + 1
             preloaded_messages_this_dialog = preloaded_messages_this_dialog + 1
 

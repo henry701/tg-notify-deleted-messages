@@ -771,8 +771,8 @@ def create_engine(database_url : str, future : bool, pool : Union[sqlalchemy.poo
         database_url,
         echo=False,
         future=future, # type: ignore
-        pool_size=10,
-        max_overflow=2,
+        pool_size=40,
+        max_overflow=5,
         pool_recycle=300,
         pool_pre_ping=True,
         pool_use_lifo=True,

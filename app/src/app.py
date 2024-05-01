@@ -710,7 +710,7 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
         async for message in client.iter_messages(peer, offset_date=iter_from_offset, reverse=True):
             iterated_messages = iterated_messages + 1
             iterated_messages_this_dialog = iterated_messages_this_dialog + 1
-            message_result = preload_message(message)
+            message_result = await preload_message(message)
             if message_result is None:
                 break
             if message_result is False:

@@ -35,7 +35,7 @@ auto_rollback = true
 
 [build]
 dockerfile = "./Dockerfile"
-build-target = "runner"
+build-target = "gunicorn-runner"
 
 [deploy]
 # To avoid telegram seeing two concurrent clients

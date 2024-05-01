@@ -25,6 +25,10 @@ ARG SUPPORTS_PGSQL=1
 RUN if [[ "$SUPPORTS_PGSQL" -eq 1 ]]; then pip install --no-cache -r /usr/app/meta/requirements/pgsql.txt; fi
 RUN pip install --no-cache -r /usr/app/meta/requirements/db_cripto.txt
 RUN pip install --no-cache -r /usr/app/meta/requirements/perf.txt
+ARG SUPPORTS_GUNICORN=1
+RUN if [[ "$SUPPORTS_GUNICORN" -eq 1 ]]; then pip install --no-cache -r /usr/app/meta/requirements/server-gunicorn.txt; fi
+ARG SUPPORTS_UWSGI=1
+RUN if [[ "$SUPPORTS_UWSGI" -eq 1 ]]; then pip install --no-cache -r /usr/app/meta/requirements/server-uwsgi.txt; cp -a "$(which uwsgi)" /uwsgi; fi
 COPY ./app/meta/monkey/. /usr/app/meta/monkey/.
 # lmao
 RUN ["sed", "-i", "s/from sqlalchemy.orm.query import _ColumnEntity/from sqlalchemy.orm.context import _ColumnEntity/g", "/usr/local/lib/python3.9/site-packages/sqlalchemy_utils/functions/orm.py"]
@@ -48,8 +52,15 @@ COPY --from=full /usr/app/src/. /usr/app/src/.
 COPY --from=full /usr/app/conf/. /usr/app/conf/.
 RUN mkdir -p /usr/app/state
 
-FROM lean AS runner
+FROM lean AS gunicorn-runner
 WORKDIR /usr/app/src
 ENV PORT=443
 EXPOSE "$PORT"
 ENTRYPOINT [ "/bin/bash", "-c", "exec python3 -m gunicorn --bind 0.0.0.0:\"$PORT\" wsgi:app \"${@}\"", "--" ]
+
+FROM lean AS uwsgi-runner
+WORKDIR /usr/app/src
+ENV PORT=443
+EXPOSE "$PORT"
+COPY --from=builder /uwsgi /uwsgi
+ENTRYPOINT [ "/bin/bash", "-c", "exec /uwsgi --http-socket 0.0.0.0:\"$PORT\" --wsgi-file wsgi.py \"${@}\"", "--" ]

@@ -493,15 +493,31 @@ def ask_exit(signame, loop : asyncio.AbstractEventLoop, additional):
     logger.warning("cancelled all tasks")
 
 async def make_client(alchemy_telegram_container : AlchemySessionContainer, telegram_api_id, telegram_api_hash, session_id, loop : asyncio.AbstractEventLoop):
+    
+    def construct_client():
+        return TelegramClient(
+            session=telegram_session,
+            api_id=telegram_api_id,
+            api_hash=telegram_api_hash,
+            loop=loop,
+            flood_sleep_threshold=65500,
+            request_retries=50,
+            connection_retries=None,
+            entity_cache_limit=1000,
+            use_ipv6=bool(strtobool(os.getenv("USE_IPV6", '0'))),
+        )
+    
     telegram_session = alchemy_telegram_container.new_session(session_id)
-    client = TelegramClient(session=telegram_session, api_id=telegram_api_id, api_hash=telegram_api_hash, loop=loop)
+    client = construct_client()
     logger.info('Connecting Telegram Client')
     try:
         await client.connect()
     except AuthKeyDuplicatedError:
+        logger.error('AuthKeyDuplicatedError, disconnecting telegram client and re-creating session!', exc_info=True)
         telegram_session.delete()
         telegram_session = alchemy_telegram_container.new_session(session_id)
-        client = TelegramClient(session=telegram_session, api_id=telegram_api_id, api_hash=telegram_api_hash)
+        client = construct_client()
+        logger.info('Connecting Telegram Client again')
         await client.connect()
     logger.info('Telegram Client Connected!')
     return client
@@ -569,16 +585,20 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
         nonlocal client
         nonlocal bot
         if stop_event is not None:
+            logger.info("Setting stop event flag")
             stop_event.set()
         if client is not None:
+            logger.info("Disconnecting Client")
             disconnecter_coro = client.disconnect()
             if disconnecter_coro is not None:
                 await disconnecter_coro
             client = None
         if bot is not None:
+            logger.info("Disconnecting Bot")
             await bot.__aexit__(None, None, None)
         count = 0
         while asyncio.all_tasks(loop) and count < 10:
+            logger.info("Waiting for Asyncio to Finish Tasks")
             await asyncio.sleep(1)
             count += 1
     
@@ -589,12 +609,12 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
 
     database_url = get_db_url()
 
-    old_sqlalchemy_engine = create_engine(database_url, False)
-    alchemy_telegram_container = AlchemySessionContainer(engine = old_sqlalchemy_engine, table_base=Base, manage_tables=False, table_prefix=os.getenv("SESSION_TABLE_PREFIX", 'thon_'))
-    alchemy_telegram_container.core_mode = True
-
     sqlalchemy_engine = create_engine(database_url, True)
     sqlalchemy_session_maker = sessionmaker(bind=sqlalchemy_engine, future=True, expire_on_commit=False)
+
+    old_sqlalchemy_engine = create_engine(database_url, False, sqlalchemy_engine.pool)
+    alchemy_telegram_container = AlchemySessionContainer(engine = old_sqlalchemy_engine, table_base=Base, manage_tables=False, table_prefix=os.getenv("SESSION_TABLE_PREFIX", 'thon_'))
+    alchemy_telegram_container.core_mode = True
 
     create_database(sqlalchemy_engine)
 
@@ -674,40 +694,39 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
     store_message = get_store_message(sqlalchemy_session_maker, client)
     should_ignore_incoming_message = get_should_ignore_incoming_message(client)
 
-    message : telethon.tl.custom.message.Message = None
-    dialog : telethon.tl.custom.dialog.Dialog = None
+    async def preload_messages_for_peer(peer):
 
-    @retry(retry=retry_if_exception_type((IOError, sqlalchemy.exc.DBAPIError)), stop=stop_after_attempt(3))
-    async def preload_message():
-        if await should_ignore_incoming_message(message):
-            return False
-        with sqlalchemy_session_maker.begin() as sqlalchemy_session:
-            (messages, query, unloaded_ids, filtered_away_ids) = await load_messages_by_parameters(
-                [ message.id ],
-                await message.get_chat(),
-                client,
-                sqlalchemy_session,
-                False,
-                False,
-                False,
-                False,
-                0,
-                True
-            )
-            if len(messages) > 0:
-                logger.info('Stopping preloading for dialog={dialog}, found a message that exists in the database. Timestamp: {message_timestamp}'.format(dialog=dialog.id, message_timestamp=message.date))
-                return None
-            if iterated_messages % 15 == 0:
-                logger.info('Preloading still in progress for dialog={dialog}. Date so far: {message_timestamp}. Dialog messages preloaded so far: {preloaded_messages_this_dialog}. Total messages preloaded so far: {preloaded_messages}'.format(
-                    dialog=dialog.id, message_timestamp=message.date, preloaded_messages_this_dialog=preloaded_messages_this_dialog, preloaded_messages=preloaded_messages))
-        return await store_message(message)
-    
-    async for dialog in client.iter_dialogs():
         iterated_messages_this_dialog=0
         preloaded_messages_this_dialog=0
-        logger.info('Preloading existing messages for dialog={dialog}'.format(dialog=dialog.id))
-        peer = dialog.input_entity
+
+        @retry(retry=retry_if_exception_type((IOError, sqlalchemy.exc.DBAPIError)), stop=stop_after_attempt(3))
+        async def preload_message(message : telethon.tl.custom.message.Message):
+            if await should_ignore_incoming_message(message):
+                return False
+            with sqlalchemy_session_maker.begin() as sqlalchemy_session:
+                (messages, query, unloaded_ids, filtered_away_ids) = await load_messages_by_parameters(
+                    [ message.id ],
+                    await message.get_chat(),
+                    client,
+                    sqlalchemy_session,
+                    False,
+                    False,
+                    False,
+                    False,
+                    0,
+                    True
+                )
+                if len(messages) > 0:
+                    logger.info('Stopping preloading for dialog={dialog}, found a message that exists in the database. Timestamp: {message_timestamp}'.format(dialog=dialog.id, message_timestamp=message.date))
+                    return None
+                if iterated_messages % 15 == 0:
+                    logger.info('Preloading still in progress for dialog={dialog}. Date so far: {message_timestamp}. Dialog messages preloaded so far: {preloaded_messages_this_dialog}. Total messages preloaded so far: {preloaded_messages}'.format(
+                        dialog=dialog.id, message_timestamp=message.date, preloaded_messages_this_dialog=preloaded_messages_this_dialog, preloaded_messages=preloaded_messages))
+            return await store_message(message)
+
+        message : telethon.tl.custom.message.Message = None
         async for message in client.iter_messages(peer, offset_date=iter_from_offset, reverse=True):
+            nonlocal iterated_messages
             iterated_messages = iterated_messages + 1
             iterated_messages_this_dialog = iterated_messages_this_dialog + 1
             message_result = await preload_message(message)
@@ -715,19 +734,38 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
                 break
             if message_result is False:
                 continue
+            nonlocal preloaded_messages
             preloaded_messages = preloaded_messages + 1
             preloaded_messages_this_dialog = preloaded_messages_this_dialog + 1
+
         logger.info('Preloaded {preloaded_messages_this_dialog} existing messages for dialog={dialog}'.format(dialog=dialog.id, preloaded_messages_this_dialog=preloaded_messages_this_dialog))
+
+    dialog_futures = []
+    dialog : telethon.tl.custom.dialog.Dialog = None
+    async for dialog in client.iter_dialogs():
+        logger.info('Preloading existing messages for dialog={dialog}'.format(dialog=dialog.id))
+        dialog_futures.append(preload_messages_for_peer(dialog.input_entity))
+    if len(dialog_futures) > 0:
+        await asyncio.gather(*dialog_futures)
+
     logger.info('Preloaded existing message count: {preloaded_messages} of {iterated_messages} iterated'.format(preloaded_messages=preloaded_messages, iterated_messages=iterated_messages))
 
-def create_engine(database_url : str, future : bool):
+def create_engine(database_url : str, future : bool, pool : Union[sqlalchemy.pool.Pool, None] = None):
+    if pool is not None:
+        logger.debug("Reusing Pool")
+        return sqlalchemy.create_engine(
+            database_url,
+            echo=False,
+            future=future, # type: ignore
+            pool=pool,
+        )
     if database_url.startswith("sqlite"):
         return sqlalchemy.create_engine(
             database_url,
             echo=False,
             future=future, # type: ignore
             pool_pre_ping=True,
-            connect_args={'timeout': 30}
+            connect_args={'timeout': 30},
         )
     return sqlalchemy.create_engine(
         database_url,
@@ -743,7 +781,7 @@ def create_engine(database_url : str, future : bool):
             "keepalives_idle": 30,
             "keepalives_interval": 10,
             "keepalives_count": 5,
-        }
+        },
     )
 
 def create_app(client : Union[TelegramClient, None], bot : Union[BotAssistant, None], loop : asyncio.AbstractEventLoop, sqlalchemy_session_maker : sessionmaker) -> flask.Flask:
@@ -765,6 +803,13 @@ def create_app(client : Union[TelegramClient, None], bot : Union[BotAssistant, N
         nonlocal sent_code
         sent_code = asyncio.run_coroutine_threadsafe(client.send_code_request(phone=phone), loop).result()
         logger.info('Sent code request')
+        return flask.Response(status=204)
+
+    @flask_app.route('/logout', methods=['GET'])
+    def logout():
+        logger.info('Logging out')
+        asyncio.run_coroutine_threadsafe(client.log_out(), loop).result()
+        logger.info('Logged out!')
         return flask.Response(status=204)
 
     @flask_app.route('/auth', methods=['GET'])

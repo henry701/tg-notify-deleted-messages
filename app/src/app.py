@@ -72,6 +72,7 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
     ignore_gigagroups = bool(strtobool(os.getenv("IGNORE_GIGAGROUPS", '0')))
     member_ignore_threshold = int(os.getenv("MEMBER_IGNORE_THRESHOLD", '0'))
     should_notify_outgoing_messages=bool(strtobool(os.getenv('NOTIFY_OUTGOING_MESSAGES', 'True')))
+    deleted_messages_notification_concurrency=int(os.getenv("DELETED_MESSAGES_NOTIFICATION_CONCURRENCY", '1'))
 
     @retry(retry=retry_if_exception_type((IOError, sqlalchemy.exc.DBAPIError)), stop=stop_after_attempt(3))
     async def on_message_deleted(event: MessageDeleted.Event):
@@ -137,7 +138,7 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
         if unloaded_ids and len(unloaded_ids):
             awaitables.append(notify_unknown_message(unloaded_ids, event, client))
         if len(awaitables) > 0:
-            await gather_with_concurrency(8, *awaitables)
+            await gather_with_concurrency(deleted_messages_notification_concurrency, *awaitables)
 
     return on_message_deleted
 
@@ -184,12 +185,21 @@ def get_should_ignore_incoming_message(client : TelegramClient):
         )
     return should_ignore_incoming_message
 
+
+download_semaphore = asyncio.Semaphore(int(os.getenv("MEDIA_DOWNLOADS_CONCURRENCY", '1')))
+file_size_threshold = int(os.getenv("MEDIA_FILE_SIZE_THRESHOLD", '0'))
+@retry(retry=retry_if_exception_type(IOError), stop=stop_after_attempt(3))
+async def get_message_media_blob(message : telethon.tl.custom.message.Message):
+    if not message or not message.media or not message.file or not message.file.size or (file_size_threshold > 0 and message.file.size < file_size_threshold):
+        return None
+    async with download_semaphore:
+        return await message.download_media(file=bytes)
+
 def get_store_message(
     sqlalchemy_session_maker : sessionmaker,
     client : TelegramClient
 ):
     should_ignore_incoming_message = get_should_ignore_incoming_message(client)
-    file_size_threshold = int(os.getenv("MEDIA_FILE_SIZE_THRESHOLD", '0'))
     @retry(retry=retry_if_exception_type((IOError, sqlalchemy.exc.DBAPIError)), stop=stop_after_attempt(3))
     async def store_message(message : telethon.tl.custom.message.Message):
         should_ignore : bool = await should_ignore_incoming_message(message)
@@ -197,9 +207,7 @@ def get_store_message(
             return False
         built_from_peer = await build_telegram_peer(message.from_id, client, sqlalchemy_session_maker)
         built_chat_peer = await build_telegram_peer(message.peer_id, client, sqlalchemy_session_maker)
-        blob = None
-        if message.media and message.file and message.file.size and (file_size_threshold == 0 or message.file.size < file_size_threshold):
-            blob = await message.download_media(file=bytes)
+        blob = await get_message_media_blob(message)
         with sqlalchemy_session_maker.begin() as sqlalchemy_session:
             orm_message = TelegramMessage(
                 id = message.id,
@@ -548,14 +556,16 @@ async def client_main_loop_job(stop_event, sqlalchemy_session_maker, configured_
     async def actual_notify_message_deletion(message : TelegramMessage, client : TelegramClient):
         await base_notify_message_deletion(message, client)
         await configured_notify_message_deletion(message, client)
-    await preload_messages(client, sqlalchemy_session_maker)
-    await add_event_handlers(client, sqlalchemy_session_maker, actual_notify_message_deletion, configured_notify_unknown_message)
-    await clean_old_messages_loop(
+    add_event_handlers_awaitable = add_event_handlers(client, sqlalchemy_session_maker, actual_notify_message_deletion, configured_notify_unknown_message)
+    preload_messages_awaitable = preload_messages(client, sqlalchemy_session_maker)
+    old_messages_clean_loop_awaitable = clean_old_messages_loop(
         sqlalchemy_session_maker=sqlalchemy_session_maker,
         seconds_interval=int(os.getenv("CLEAN_OLD_MESSAGES_SECONDS_INTERVAL", 900)),
         ttl=messages_ttl_delta,
         stop_event=stop_event
     )
+    await asyncio.gather(add_event_handlers_awaitable, preload_messages_awaitable)
+    await old_messages_clean_loop_awaitable
 
 def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
 
@@ -706,9 +716,6 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
                     0,
                     True
                 )
-                if len(messages) > 0:
-                    logger.info('Stopping preloading for dialog={dialog}, found a message that exists in the database. Timestamp: {message_timestamp}'.format(dialog=dialog.id, message_timestamp=message.date))
-                    return None
                 if iterated_messages % 15 == 0:
                     logger.info('Preloading still in progress for dialog={dialog}. Date so far: {message_timestamp}. Dialog messages preloaded so far: {preloaded_messages_this_dialog}. Total messages preloaded so far: {preloaded_messages}'.format(
                         dialog=dialog.id, message_timestamp=message.date, preloaded_messages_this_dialog=preloaded_messages_this_dialog, preloaded_messages=preloaded_messages))
@@ -720,8 +727,6 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
             iterated_messages = iterated_messages + 1
             iterated_messages_this_dialog = iterated_messages_this_dialog + 1
             message_result = await preload_message(message)
-            if message_result is None:
-                break
             if message_result is False:
                 continue
             nonlocal preloaded_messages
@@ -735,7 +740,7 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
     async for dialog in client.iter_dialogs():
         dialog_coros.append(preload_messages_for_dialog(dialog))
     if len(dialog_coros) > 0:
-        await gather_with_concurrency(8, *dialog_coros)
+        await gather_with_concurrency(int(os.getenv("PRELOAD_MESSAGES_DIALOG_CONCURRENCY", '8')), *dialog_coros)
 
     logger.info('Preloaded existing message count: {preloaded_messages} of {iterated_messages} iterated'.format(preloaded_messages=preloaded_messages, iterated_messages=iterated_messages))
 

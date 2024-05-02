@@ -6,3 +6,6 @@
 
 # Allow App Folder
 !app/**
+
+# Allow Docker Folder
+!docker/**

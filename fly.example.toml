@@ -78,3 +78,5 @@ protocol = "http"
 restart_limit = 4
 timeout = "120s"
 tls_skip_verify = false
+[services.http_checks.headers]
+Authorization = "Bearer CHANGEMEPASSWORD"

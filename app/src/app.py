@@ -841,6 +841,16 @@ def create_app(client : Union[TelegramClient, None], bot : Union[BotAssistant, N
 
     add_informative_routes(client, bot, flask_app, loop, sqlalchemy_session_maker)
 
+    bearer_token = os.getenv("HTTP_BEARER_TOKEN")
+
+    @flask_app.before_request
+    def before_request():
+        if bearer_token is None:
+            return
+        auth_header_value = flask.request.headers.get("Authorization")
+        if auth_header_value != "Bearer {token}".format(token=bearer_token):
+            return flask.Response(status=401)
+
     @flask_app.route('/send_code', methods=['GET'])
     def send_code():
         logger.info('Sending code request')

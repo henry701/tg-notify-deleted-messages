@@ -490,10 +490,10 @@ def ask_exit(signame : Union[str, None], loop : asyncio.AbstractEventLoop, addit
     all_tasks = asyncio.all_tasks(loop)
     tasklen = len(all_tasks)
     if tasklen > 0:
-        logger.warning(f"[exit] Cancelling all remaining {tasklen} asyncio tasks!", tasklen=tasklen)
+        logger.warning("[exit] Cancelling all remaining {tasklen} asyncio tasks!".format(tasklen=tasklen))
         for task in all_tasks:
             task.cancel()
-        logger.warning(f"[exit] Cancelled all remaining {tasklen} asyncio tasks!", tasklen=tasklen)
+        logger.warning("[exit] Cancelled all remaining {tasklen} asyncio tasks!".format(tasklen=tasklen))
     logger.info("[exit] Bye bye! Gracefully exited.")
     sys.exit(0)
 

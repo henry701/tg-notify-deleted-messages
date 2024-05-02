@@ -787,7 +787,7 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
         await gather_with_concurrency(int(os.getenv("PRELOAD_MESSAGES_DIALOG_CONCURRENCY", '8')), *dialog_coros)
 
     preload_messages_status_task.cancel()
-    logger.info('Preloading finished! Existing message count: {preloaded_messages}. Total messages iterated: {iterated_messages}'.format(preloaded_messages=preloaded_messages, iterated_messages=iterated_messages))
+    logger.info('Preloading finished! Existing message preloaded count: {preloaded_messages}. Total messages iterated: {iterated_messages}'.format(preloaded_messages=preloaded_messages, iterated_messages=iterated_messages))
 
 async def gather_with_concurrency(n, *coros):
     semaphore = asyncio.Semaphore(n)

@@ -737,10 +737,13 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
     iterated_messages=0
     preloaded_messages=0
 
+    preload_status_report_interval=int(os.getenv("PRELOAD_MESSAGES_STATUS_REPORT_INTERVAL", '60'))
     async def preload_messages_status_loop():
+        if preload_status_report_interval <= 0:
+            return
         while True:
             try:
-                await asyncio.sleep(30)
+                await asyncio.sleep(preload_status_report_interval)
             except asyncio.CancelledError:
                 return
             logger.info('Preloading still in progress. Total so far: {preloaded_messages} preloaded, {iterated_messages} iterated'.format(preloaded_messages=preloaded_messages, iterated_messages=iterated_messages))

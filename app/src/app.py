@@ -687,7 +687,8 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
         client,
         bot,
         loop,
-        sqlalchemy_session_maker
+        sqlalchemy_session_maker,
+        sync_closer
     )
 
     logger.info("Returning from create_app_and_start_jobs")
@@ -751,13 +752,13 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
 
     async def preload_messages_for_dialog(dialog):
 
-        logger.info('Preloading existing messages for dialog={dialog}'.format(dialog=dialog.id))
+        logger.debug('Preloading existing messages for dialog={dialog}'.format(dialog=dialog.id))
 
         peer = dialog.input_entity
         full_peer = await client.get_entity(peer)
 
         if await should_ignore_message_chat(full_peer):
-            logger.info('Preloading ignoring filtered dialog={dialog}'.format(dialog=dialog.id))
+            logger.debug('Preloading ignoring filtered dialog={dialog}'.format(dialog=dialog.id))
             return
 
         iterated_messages_this_dialog=0
@@ -775,7 +776,7 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
             preloaded_messages = preloaded_messages + 1
             preloaded_messages_this_dialog = preloaded_messages_this_dialog + 1
 
-        logger.info('Preloaded {preloaded_messages_this_dialog} existing messages for dialog={dialog}'.format(dialog=dialog.id, preloaded_messages_this_dialog=preloaded_messages_this_dialog))
+        logger.debug('Preloaded {preloaded_messages_this_dialog} existing messages for dialog={dialog}'.format(dialog=dialog.id, preloaded_messages_this_dialog=preloaded_messages_this_dialog))
         
     dialog_coros = []
     dialog : telethon.tl.custom.dialog.Dialog = None
@@ -828,7 +829,7 @@ def create_engine(database_url : str, future : bool, pool : Union[sqlalchemy.poo
         },
     )
 
-def create_app(client : Union[TelegramClient, None], bot : Union[BotAssistant, None], loop : asyncio.AbstractEventLoop, sqlalchemy_session_maker : sessionmaker) -> flask.Flask:
+def create_app(client : Union[TelegramClient, None], bot : Union[BotAssistant, None], loop : asyncio.AbstractEventLoop, sqlalchemy_session_maker : sessionmaker, sync_closer) -> flask.Flask:
 
     if client is None:
         raise ValueError('Client not initialized!')
@@ -863,7 +864,8 @@ def create_app(client : Union[TelegramClient, None], bot : Union[BotAssistant, N
     def logout():
         logger.info('Logging out')
         asyncio.run_coroutine_threadsafe(client.log_out(), loop).result()
-        logger.info('Logged out!')
+        logger.info('Logged out! Exiting, because client is unusable.')
+        loop.call_later(1, sync_closer)
         return flask.Response(status=204)
 
     @flask_app.route('/auth', methods=['GET'])

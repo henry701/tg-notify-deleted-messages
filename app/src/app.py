@@ -145,7 +145,7 @@ def get_on_message_deleted(client: TelegramClient, sqlalchemy_session_maker : se
     return on_message_deleted
 
 def get_on_new_message(sqlalchemy_session_maker : sessionmaker, client : TelegramClient):
-    store_message_if_not_exists = get_store_message_if_not_exists(sqlalchemy_session_maker, client)
+    store_message_if_not_exists = get_store_message_if_not_exists(client, sqlalchemy_session_maker)
     @retry(retry=retry_if_exception_type((IOError, sqlalchemy.exc.DBAPIError)), stop=stop_after_attempt(3))
     async def on_new_message(event: NewMessage.Event):
         effective_level=logger.getEffectiveLevel()

@@ -787,6 +787,7 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
         preloaded_messages_this_dialog=0
 
         message : telethon.tl.custom.message.Message = None
+        telethon.client.messages._MAX_CHUNK_SIZE = 1
         async for message in client.iter_messages(full_peer, offset_date=iter_from_offset, reverse=True):
             nonlocal iterated_messages
             nonlocal preloaded_messages

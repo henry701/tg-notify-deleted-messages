@@ -13,9 +13,9 @@ ENCRYPTION_KEY = os.getenv("DATABASE_ENCRYPTION_KEY")
 
 def encrypt_type(input_type : sqlalchemy.types.TypeEngine, engine : Type[EncryptionDecryptionBaseEngine]):
     if not ENCRYPTION_KEY:
-        logging.info(f"ENCRYPTION_KEY is not set, not encrypting Type {input_type}")
+        logging.debug(f"ENCRYPTION_KEY is not set, not encrypting Type {input_type}")
         return input_type
-    logging.info(f"Encrypting Type {input_type} ({input_type.python_type})")
+    logging.debug(f"Encrypting Type {input_type} ({input_type.python_type})")
     return StringEncryptedType(input_type, ENCRYPTION_KEY, engine, 'pkcs5')    
 
 def encrypt_type_searchable(input_type : sqlalchemy.types.TypeEngine):

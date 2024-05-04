@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from datetime import timezone
-from sqlalchemy import Column, Integer, String, BLOB, TIMESTAMP, Boolean
+from sqlalchemy import Column, Integer, String, LargeBinary, TIMESTAMP, Boolean
 from sqlalchemy.sql.schema import ForeignKey
 
 from packages.models.root.TelegramPeer import TelegramPeer
@@ -18,6 +18,6 @@ class TelegramMessage(Base):
     from_peer_id = Column(Integer, ForeignKey(TelegramPeer.id))
     from_peer = relationship(TelegramPeer, lazy=False, cascade="all", foreign_keys=[from_peer_id])
     text = Column(encrypt_type_safer(String(4096)))
-    media = Column(encrypt_type_safer(BLOB()))
+    media = Column(encrypt_type_safer(LargeBinary()))
     timestamp = Column(TIMESTAMP(timezone=True), nullable=False)
     deleted = Column(Boolean(), nullable=False, default=False)

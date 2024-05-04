@@ -477,11 +477,17 @@ def get_default_notify_unknown_message() -> Callable[[List[int], MessageDeleted.
         )
     return default_notify_unknown_message
 
+is_exiting = False
 def ask_exit(signame : Union[str, None], loop : asyncio.AbstractEventLoop, additional):
     if signame:
         logger.warning("[exit] Got signal %s: exiting!" % signame)
     else:
         logger.info("[exit] Gracefully exiting, called from code!")
+    global is_exiting
+    if is_exiting:
+        logger.info("ask_exit re-entry detected, ignoring")
+        return
+    is_exiting = True
     if additional:
         logger.info("[exit] Running user-provided cleanupper")
         try:
@@ -548,7 +554,7 @@ async def configure_bot(alchemy_telegram_container, telegram_api_id, telegram_ap
     if telegram_bot_token is not None:
         if target_chat is None or target_chat == "me":
             logger.critical('Must provide TARGET_CHAT (except "me") if you want to use bot assistant!')
-            exit(1)
+            os._exit(1)
         logger.info('Using bot for message notification')
         bot = BotAssistant(
             int(target_chat) if bool(strtobool(os.getenv("TARGET_CHAT_IS_ID", '0'))) else target_chat,
@@ -623,7 +629,11 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
         if bot is not None:
             logger.info("Disconnecting Bot")
             close_coros.append(bot.__aexit__(None, None, None))
-        await asyncio.gather(*close_coros)
+        try:
+            await asyncio.gather(*close_coros)
+        except Exception as e:
+            logger.critical("Error while running closer coroutines!", exc_info=True)
+            os._exit(1)
     
     def sync_closer():
         ask_exit(None, loop, closer)
@@ -663,13 +673,13 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
             nonlocal started_event
             started_event = asyncio.Event()
             loop.run_forever()
-            exit(0)
         except Exception as e:
-            logger.critical("Error on worker function! {e}".format(e=e))
+            logger.critical("Error on worker function! {e}".format(e=e), exc_info=True)
             sync_closer()
-            exit(1)
+            os._exit(1)
         finally:
             logger.info("Exiting worker function!")
+        os._exit(0)
     worker_thread = threading.Thread(target=worker_function, args=(loop, sync_closer), name='loop-app-client-bgthread')
     worker_thread.start()
 
@@ -692,7 +702,7 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
                 return
             logger.error("Error while running main job: {e}".format(e=e), exc_info=True)
             sync_closer()
-            exit(1)
+            os._exit(1)
         else:
             logger.info("Main job loop finished, calling sync closer")
             sync_closer()
@@ -818,24 +828,13 @@ def create_engine(database_url : str, future : bool, pool : Union[sqlalchemy.poo
             pool=pool,
         )
     connect_args = json.loads(os.getenv('CUSTOM_SQLALCHEMY_CONNECT_ARGS')) if os.getenv('CUSTOM_SQLALCHEMY_CONNECT_ARGS') else {}
-    if database_url.startswith("sqlite"):
-        return sqlalchemy.create_engine(
-            database_url,
-            echo=False,
-            future=future, # type: ignore
-            pool_pre_ping=True,
-            connect_args=connect_args,
-        )
+    create_engine_add_args = json.loads(os.getenv('CUSTOM_SQLALCHEMY_CREATE_ENGINE_ARGS')) if os.getenv('CUSTOM_SQLALCHEMY_CREATE_ENGINE_ARGS') else {}
     return sqlalchemy.create_engine(
         database_url,
         echo=False,
         future=future, # type: ignore
-        pool_size=40,
-        max_overflow=5,
-        pool_recycle=300,
-        pool_pre_ping=True,
-        pool_use_lifo=True,
         connect_args=connect_args,
+        **create_engine_add_args
     )
 
 def create_app(client : Union[TelegramClient, None], bot : Union[BotAssistant, None], loop : asyncio.AbstractEventLoop, sqlalchemy_session_maker : sessionmaker, sync_closer) -> flask.Flask:

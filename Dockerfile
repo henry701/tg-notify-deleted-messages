@@ -57,7 +57,7 @@ RUN mkdir /pypy && cp -a "/tmp/usession-release-pypy3."*"-current/build/pypy-"*"
 
 FROM common AS builder
 RUN mkdir -p /opt/pypy
-COPY --from=pypy-builder /pypy/. /opt/pypy/.
+COPY --link --from=pypy-builder /pypy/. /opt/pypy/.
 ENV PATH="/opt/pypy/bin:${PATH}"
 RUN apk add --no-cache \
         bzip2-dev \
@@ -112,7 +112,7 @@ ARG GENERATE_SELF_SIGNED_CERT=0
 RUN if [[ "$GENERATE_SELF_SIGNED_CERT" -eq 1 ]]; then openssl req -new -x509 -keyout /usr/app/conf/server.pem -out /usr/app/conf/server.pem -days 5000 -nodes -subj "/C=US/ST=Test/L=Test/O=Test/CN=www.test.com"; fi
 COPY ./app/conf/. /usr/app/conf/.
 RUN find /usr/app/src -type f -name '*.py' -print0 | xargs -0 dos2unix
-RUN mkdir -p /pylibs && cp -a "$(python3 -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")" /pylibs/.
+RUN rm -rf /pylibs && cp -a "$(python3 -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")" /pylibs
 RUN echo "$(python3 -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")" > /libpath.txt
 
 FROM common AS lean
@@ -124,14 +124,14 @@ ARG DRIVER_PYSCOPG2=1
 RUN if [[ "$DRIVER_PYSCOPG2" -eq 1 ]]; then apk --no-cache add libpq; fi
 RUN mkdir -p /usr/app/state
 RUN mkdir -p /opt/pypy
-COPY --from=full /opt/pypy/. /opt/pypy/.
+COPY --link --from=full /opt/pypy/. /opt/pypy/.
 ENV PATH="/opt/pypy/bin:${PATH}"
-COPY --from=full /pylibs/. /pylibs/.
-COPY --from=full /libpath.txt /libpath.txt
+COPY --link --from=full /pylibs/. /pylibs/.
+COPY --link --from=full /libpath.txt /libpath.txt
 SHELL ["/bin/bash", "-c"]
-RUN cp -a /pylibs/. "$(cat /libpath.txt)"/. && rm -rf /pylibs
-COPY --from=full /usr/app/src/. /usr/app/src/.
-COPY --from=full /usr/app/conf/. /usr/app/conf/.
+RUN rm -rf "$(cat /libpath.txt)" && mkdir -p "$(dirname "$(cat /libpath.txt)")" && ln -s /pylibs "$(cat /libpath.txt)"
+COPY --link --from=full /usr/app/src/. /usr/app/src/.
+COPY --link --from=full /usr/app/conf/. /usr/app/conf/.
 
 FROM lean AS gunicorn-runner
 WORKDIR /usr/app/src
@@ -143,5 +143,5 @@ FROM lean AS uwsgi-runner
 WORKDIR /usr/app/src
 ENV PORT=443
 EXPOSE "$PORT"
-COPY --from=builder /uwsgi /uwsgi
+COPY --link --from=builder /uwsgi /uwsgi
 ENTRYPOINT [ "/bin/bash", "-c", "exec /uwsgi --http-socket 0.0.0.0:\"$PORT\" --wsgi-file wsgi.py \"${@}\"", "--" ]

@@ -380,7 +380,7 @@ async def load_messages_by_parameters(
     ):
         return ([], None, [], ids)
 
-    (the_query, db_results, unloaded_ids) = load_messages_from_db(
+    (the_query, db_results, unloaded_ids) = await load_messages_from_db(
         ids,
         peer_entity,
         sqlalchemy_session,
@@ -498,6 +498,8 @@ def ask_exit(signame : Union[str, None], loop : asyncio.AbstractEventLoop, addit
         for task in all_tasks:
             task.cancel()
         logger.warning("[exit] Cancelled all remaining {tasklen} asyncio tasks!".format(tasklen=tasklen))
+    logger.info("[exit] Stopping the loop!")
+    loop.stop()
     logger.info("[exit] Bye bye! Gracefully exited.")
 
 async def make_client(alchemy_telegram_container : AlchemySessionContainer, telegram_api_id, telegram_api_hash, session_id, loop : asyncio.AbstractEventLoop):
@@ -655,12 +657,13 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
             nonlocal stop_event
             stop_event = asyncio.Event()
             loop.run_forever()
+            exit(0)
         except Exception as e:
             logger.critical("Error on worker function! {e}".format(e=e))
             sync_closer()
+            exit(1)
         finally:
             logger.info("Exiting worker function!")
-            sys.exit(0)
     worker_thread = threading.Thread(target=worker_function, args=(loop, sync_closer), name='loop-app-client-bgthread')
     worker_thread.start()
 
@@ -682,8 +685,11 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
             if stop_event.is_set():
                 return
             logger.error("Error while running main job: {e}".format(e=e), exc_info=True)
-        logger.info("Main job loop finished, calling sync closer")
-        sync_closer()
+            sync_closer()
+            exit(1)
+        else:
+            logger.info("Main job loop finished, calling sync closer")
+            sync_closer()
 
     main_loop_job_future.add_done_callback(handle_main_loop_job_future_end)
 
@@ -811,7 +817,7 @@ def create_engine(database_url : str, future : bool, pool : Union[sqlalchemy.poo
             echo=False,
             future=future, # type: ignore
             pool_pre_ping=True,
-            connect_args={'timeout': 30},
+            connect_args={'timeout': 30, 'check_same_thread': False},
         )
     return sqlalchemy.create_engine(
         database_url,

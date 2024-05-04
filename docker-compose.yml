@@ -13,6 +13,10 @@ services:
       # DATABASE_URL: postgres://postgres:postgres@localhost/postgres
       DATABASE_URL: sqlite:///file:/usr/app/state/db.sqlite3?uri=true
       PORT: 8085
+      #CUSTOM_SQLALCHEMY_CONNECT_ARGS: '{"keepalives": 1, "keepalives_idle": 30, "keepalives_interval": 10, "keepalives_count": 5}'
+      CUSTOM_SQLALCHEMY_CONNECT_ARGS: '{"check_same_thread": false}'
+      GUNICORN_CMD_ARGS: "--timeout 120"
+      PYPY_GC_MAX: "100MB"
     ports:
       - "8085"
     volumes: 

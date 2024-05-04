@@ -92,8 +92,10 @@ RUN pip3 install --no-cache setuptools wheel pycparser
 RUN mkdir -p /usr/app/conf/
 COPY ./app/meta/requirements/. /usr/app/meta/requirements/.
 RUN pip3 install --no-cache -r /usr/app/meta/requirements/base.txt
-ARG DRIVER_PYSCOPG2=1
-RUN if [[ "$DRIVER_PYSCOPG2" -eq 1 ]]; then apk --no-cache add postgresql-dev libpq && pip3 install --no-cache -r /usr/app/meta/requirements/pgsql-psycopg2.txt; fi
+ARG DRIVER_PSYCOPG2=1
+RUN if [[ "$DRIVER_PSYCOPG2" -eq 1 ]]; then apk --no-cache add postgresql-dev libpq && pip3 install --no-cache -r /usr/app/meta/requirements/pgsql-psycopg2.txt; fi
+ARG DRIVER_PG8000=1
+RUN if [[ "$DRIVER_PG8000" -eq 1 ]]; then pip3 install --no-cache -r /usr/app/meta/requirements/pgsql-pg8000.txt; fi
 RUN pip3 install --no-cache -r /usr/app/meta/requirements/db_cripto.txt
 RUN pip3 install --no-cache -r /usr/app/meta/requirements/perf.txt
 ARG SUPPORTS_GUNICORN=1
@@ -120,8 +122,8 @@ FROM common AS lean
 RUN apk add libbz2 libgcc
 # Needed for application
 RUN apk add sqlite-dev
-ARG DRIVER_PYSCOPG2=1
-RUN if [[ "$DRIVER_PYSCOPG2" -eq 1 ]]; then apk --no-cache add libpq; fi
+ARG DRIVER_PSYCOPG2=1
+RUN if [[ "$DRIVER_PSYCOPG2" -eq 1 ]]; then apk --no-cache add libpq; fi
 RUN mkdir -p /usr/app/state
 RUN mkdir -p /opt/pypy
 COPY --link --from=full /opt/pypy/. /opt/pypy/.
@@ -132,6 +134,8 @@ SHELL ["/bin/bash", "-c"]
 RUN rm -rf "$(cat /libpath.txt)" && mkdir -p "$(dirname "$(cat /libpath.txt)")" && ln -s /pylibs "$(cat /libpath.txt)"
 COPY --link --from=full /usr/app/src/. /usr/app/src/.
 COPY --link --from=full /usr/app/conf/. /usr/app/conf/.
+ARG ARG_DB_FORCE_URL_PROTOCOL=""
+ENV DB_FORCE_URL_PROTOCOL=${ARG_DB_FORCE_URL_PROTOCOL}
 
 FROM lean AS gunicorn-runner
 WORKDIR /usr/app/src

@@ -31,6 +31,10 @@ CLEAN_OLD_MESSAGES_SECONDS_INTERVAL = "900"
 
 GUNICORN_CMD_ARGS = "--timeout 120"
 
+CUSTOM_SQLALCHEMY_CONNECT_ARGS = '{"ssl_context": false}'
+
+PYPY_GC_MAX = "100MB"
+
 [experimental]
 allowed_public_ports = []
 auto_rollback = true

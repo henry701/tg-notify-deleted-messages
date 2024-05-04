@@ -3,7 +3,7 @@
 
 import logging
 
-import sys
+import json
 
 logger = logging.getLogger('tgdel-app')
 
@@ -563,7 +563,7 @@ async def configure_bot(alchemy_telegram_container, telegram_api_id, telegram_ap
     logger.info('Configured Bot')
     return configured_notify_message_deletion,configured_notify_unknown_message,bot
 
-async def client_main_loop_job(stop_event : asyncio.Event, sqlalchemy_session_maker : sessionmaker, configured_notify_message_deletion, configured_notify_unknown_message, client : TelegramClient):
+async def client_main_loop_job(stop_event : asyncio.Event, started_event : asyncio.Event, sqlalchemy_session_maker : sessionmaker, configured_notify_message_deletion, configured_notify_unknown_message, client : TelegramClient):
     if not configured_notify_message_deletion:
         configured_notify_message_deletion = get_default_notify_message_deletion()
     if not configured_notify_unknown_message:
@@ -574,23 +574,25 @@ async def client_main_loop_job(stop_event : asyncio.Event, sqlalchemy_session_ma
         await configured_notify_message_deletion(message, client)
     add_event_handlers_task = asyncio.create_task(add_event_handlers(client, sqlalchemy_session_maker, actual_notify_message_deletion, configured_notify_unknown_message))
     preload_messages_task = asyncio.create_task(preload_messages(client, sqlalchemy_session_maker))
-    old_messages_clean_loop_coro = clean_old_messages_loop(
+    old_messages_clean_loop_task = asyncio.create_task(clean_old_messages_loop(
         sqlalchemy_session_maker=sqlalchemy_session_maker,
         seconds_interval=int(os.getenv("CLEAN_OLD_MESSAGES_SECONDS_INTERVAL", 900)),
         ttl=messages_ttl_delta,
         stop_event=stop_event
-    )
+    ))
     stop_event_task = asyncio.create_task(stop_event.wait())
     def on_stop(fut):
         add_event_handlers_task.cancel()
         preload_messages_task.cancel()
     stop_event_task.add_done_callback(on_stop)
     await asyncio.gather(add_event_handlers_task, preload_messages_task)
-    await old_messages_clean_loop_coro
+    started_event.set()
+    await old_messages_clean_loop_task
+    await stop_event_task
 
 def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
 
-    loop = asyncio.events.new_event_loop()
+    loop : asyncio.AbstractEventLoop = asyncio.events.new_event_loop()
     nest_asyncio.apply(loop)
 
     stop_event : Union[asyncio.Event, None] = None
@@ -650,12 +652,16 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
 
     client = loop.run_until_complete(make_client(alchemy_telegram_container, telegram_api_id, telegram_api_hash, session_id, loop))
 
+    started_event : Union[asyncio.Event, None] = None
+
     def worker_function(loop : asyncio.AbstractEventLoop, sync_closer : Callable[[], Any]):
         logger.info("Entering worker function!")
         try:
             asyncio.set_event_loop(loop)
             nonlocal stop_event
             stop_event = asyncio.Event()
+            nonlocal started_event
+            started_event = asyncio.Event()
             loop.run_forever()
             exit(0)
         except Exception as e:
@@ -667,14 +673,14 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
     worker_thread = threading.Thread(target=worker_function, args=(loop, sync_closer), name='loop-app-client-bgthread')
     worker_thread.start()
 
-    while stop_event is None and worker_thread.is_alive:
+    while (stop_event is None or started_event is None) and worker_thread.is_alive:
         time.sleep(0)
 
-    if stop_event is None:
-        raise RuntimeError("Worker thread died before setting stop_event!")
+    if (stop_event is None or started_event is None):
+        raise RuntimeError("Worker thread died before setting stop_event and start_event!")
 
     main_loop_job_future = asyncio.run_coroutine_threadsafe(
-        client_main_loop_job(stop_event, sqlalchemy_session_maker, configured_notify_message_deletion, configured_notify_unknown_message, client),
+        client_main_loop_job(stop_event, started_event, sqlalchemy_session_maker, configured_notify_message_deletion, configured_notify_unknown_message, client),
         loop
     )
 
@@ -811,13 +817,14 @@ def create_engine(database_url : str, future : bool, pool : Union[sqlalchemy.poo
             future=future, # type: ignore
             pool=pool,
         )
+    connect_args = json.loads(os.getenv('CUSTOM_SQLALCHEMY_CONNECT_ARGS')) if os.getenv('CUSTOM_SQLALCHEMY_CONNECT_ARGS') else {}
     if database_url.startswith("sqlite"):
         return sqlalchemy.create_engine(
             database_url,
             echo=False,
             future=future, # type: ignore
             pool_pre_ping=True,
-            connect_args={'timeout': 30, 'check_same_thread': False},
+            connect_args=connect_args,
         )
     return sqlalchemy.create_engine(
         database_url,
@@ -828,12 +835,7 @@ def create_engine(database_url : str, future : bool, pool : Union[sqlalchemy.poo
         pool_recycle=300,
         pool_pre_ping=True,
         pool_use_lifo=True,
-        connect_args={
-            "keepalives": 1,
-            "keepalives_idle": 30,
-            "keepalives_interval": 10,
-            "keepalives_count": 5,
-        },
+        connect_args=connect_args,
     )
 
 def create_app(client : Union[TelegramClient, None], bot : Union[BotAssistant, None], loop : asyncio.AbstractEventLoop, sqlalchemy_session_maker : sessionmaker, sync_closer) -> flask.Flask:

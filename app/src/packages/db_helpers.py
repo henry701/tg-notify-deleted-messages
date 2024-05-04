@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+import os
+import re
 import sqlalchemy
 import sqlalchemy_utils
 import logging
@@ -11,6 +13,9 @@ def get_db_url():
     database_url = require_env("DATABASE_URL")
     # Heroku Workaround
     database_url = database_url.replace("postgres://", "postgresql://")
+    forced_protocol = os.getenv("DB_FORCE_URL_PROTOCOL")
+    if forced_protocol:
+        database_url = re.sub(r'^[^:]+:', forced_protocol + ':', database_url)
     return database_url
 
 def create_database(sqlalchemy_engine):

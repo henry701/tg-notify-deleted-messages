@@ -17,9 +17,10 @@ services:
       #CUSTOM_SQLALCHEMY_CONNECT_ARGS: '{"check_same_thread": false}'
       CUSTOM_SQLALCHEMY_CREATE_ENGINE_ARGS: '{"pool_size": 10, "max_overflow": 2, "pool_recycle": 300, "pool_pre_ping": true, "pool_use_lifo": true}'
       #GUNICORN_CMD_ARGS: "--timeout 120"
-      PYPY_GC_MAX: "150MB"
+      #PYPY_GC_MAX: "250MB"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     ports:
       - "8085"
     volumes: 
@@ -30,3 +31,8 @@ services:
       POSTGRES_PASSWORD: postgres
     volumes:
       - "./app/db_state:/var/lib/postgresql/data"
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-q", "-d", "postgres", "-U", "postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5

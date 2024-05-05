@@ -1,8 +1,11 @@
+ARG PYTHON_RUNTIME="cpython"
+
 FROM alpine:3 AS base
 
 FROM base AS common
 ENV PYTHONUNBUFFERED=1
 RUN apk --no-cache add bash
+SHELL ["/bin/bash", "-c"]
 RUN apk --no-cache add openssl
 RUN apk --no-cache add libffi
 
@@ -19,7 +22,7 @@ RUN apk --no-cache add make
 RUN apk --no-cache add curl
 RUN apk --no-cache add wget
 RUN apk --no-cache add git
-RUN apk add --no-cache \
+RUN apk --no-cache add \
         bzip2-dev \
         expat-dev \
         gdbm-dev \
@@ -53,51 +56,36 @@ RUN apk --no-cache add bash
 COPY --link ./docker/build.sh /build.sh
 RUN dos2unix /build.sh
 RUN bash build.sh
-RUN mkdir /pypy && cp -a "/tmp/usession-release-pypy3."*"-current/build/pypy-"*"-src.tar.bz2-linux64-alpine3.15/." /pypy/.
+RUN mkdir /python-runtime && cp -a "/tmp/usession-release-pypy3."*"-current/build/pypy-"*"-src.tar.bz2-linux64-alpine3.15/." /python-runtime/.
+COPY --link ./docker/python/pypy/. /python-runtime/.
+
+FROM common AS cpython-builder
+RUN mkdir /python-runtime # && cp -a "$(dirname "$(realpath "$(which python)")")" /python-runtime/. && cp -a /usr/lib/python*/. /python-runtime/python-libs
+COPY --link ./docker/python/cpython/. /python-runtime/.
+
+FROM ${PYTHON_RUNTIME}-builder as python-runtime
 
 FROM common AS builder
-RUN mkdir -p /opt/pypy
-COPY --link --from=pypy-builder /pypy/. /opt/pypy/.
-ENV PATH="/opt/pypy/bin:${PATH}"
-RUN apk add --no-cache \
-        bzip2-dev \
-        expat-dev \
-        gdbm-dev \
-        libc-dev \
-        linux-headers \
-        ncurses-dev \
-        openssl-dev \
-        pax-utils \
-        readline-dev \
-        sqlite-dev \
-        tar \
-        tk \
-        tk-dev \
-        xz-dev \
-        zlib-dev;
-SHELL ["/bin/bash", "-c"]
-RUN apk --no-cache add gcc
-RUN apk --no-cache add g++
-RUN apk --no-cache add make
-RUN apk --no-cache add musl-dev
-RUN apk --no-cache add libffi-dev
-RUN set -ex; cd /opt/pypy/lib/pypy* && for filename in _*build*.py; do if [[ $filename == *"winbase_build.py" ]]; then echo "[RECOMP] Skipping ${filename}"; continue; fi; echo "[RECOMP] building ${filename}" && python3 "$filename"; done;
 RUN apk --no-cache add dos2unix
 RUN apk --no-cache add cargo
 RUN apk --no-cache add curl
 RUN apk --no-cache add wget
-RUN python3 -m ensurepip
-RUN pip3 install --no-cache --upgrade pip
+RUN apk --no-cache add linux-headers
+RUN apk --no-cache add musl-dev
+RUN mkdir -p /python-runtime
+# PyPy unfortunately gobbles up too much memory for a 256mb instance, even though it's way faster.
+COPY --link --from=python-runtime /python-runtime/. /python-runtime/.
+ENV PATH="/python-runtime/bin:${PATH}"
+RUN /bin/bash /python-runtime/re_prepare.sh
 RUN pip3 install --no-cache setuptools wheel pycparser
-RUN mkdir -p /usr/app/conf/
 RUN mkdir -p /usr/app/meta/requirements/
 RUN --mount=type=bind,source=./app/meta/requirements/base.txt,target=/usr/app/meta/requirements/base.txt pip3 install --no-cache -r /usr/app/meta/requirements/base.txt
+RUN --mount=type=bind,source=./app/meta/requirements/db_cripto.txt,target=/usr/app/meta/requirements/db_cripto.txt pip3 install --no-cache -r /usr/app/meta/requirements/db_cripto.txt
+RUN --mount=type=bind,source=./app/meta/requirements/perf.txt,target=/usr/app/meta/requirements/perf.txt pip3 install --no-cache -r /usr/app/meta/requirements/perf.txt
 ARG DRIVER_PSYCOPG2=1
 RUN --mount=type=bind,source=./app/meta/requirements/pgsql-psycopg2.txt,target=/usr/app/meta/requirements/pgsql-psycopg2.txt if [[ "$DRIVER_PSYCOPG2" -eq 1 ]]; then apk --no-cache add postgresql-dev libpq && pip3 install --no-cache -r /usr/app/meta/requirements/pgsql-psycopg2.txt; fi
 ARG DRIVER_PG8000=1
 RUN --mount=type=bind,source=./app/meta/requirements/pgsql-pg8000.txt,target=/usr/app/meta/requirements/pgsql-pg8000.txt if [[ "$DRIVER_PG8000" -eq 1 ]]; then pip3 install --no-cache -r /usr/app/meta/requirements/pgsql-pg8000.txt; fi
-RUN --mount=type=bind,source=./app/meta/requirements/db_cripto.txt,target=/usr/app/meta/requirements/db_cripto.txt pip3 install --no-cache -r /usr/app/meta/requirements/db_cripto.txt
-RUN --mount=type=bind,source=./app/meta/requirements/perf.txt,target=/usr/app/meta/requirements/perf.txt pip3 install --no-cache -r /usr/app/meta/requirements/perf.txt
 ARG SUPPORTS_GUNICORN=1
 RUN --mount=type=bind,source=./app/meta/requirements/server-gunicorn.txt,target=/usr/app/meta/requirements/server-gunicorn.txt if [[ "$SUPPORTS_GUNICORN" -eq 1 ]]; then pip3 install --no-cache -r /usr/app/meta/requirements/server-gunicorn.txt; fi
 ARG SUPPORTS_HYPERCORN=1
@@ -112,36 +100,35 @@ RUN find "$(python3 -c "from distutils.sysconfig import get_python_lib; print(ge
 RUN cp -av /usr/app/meta/monkey/. "$(python3 -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")"/.
 
 FROM builder AS full
-COPY --link ./app/src/. /usr/app/src/.
+RUN mkdir -p /usr/app/conf/
+COPY --link ./app/conf/. /usr/app/conf/.
 ARG GENERATE_SELF_SIGNED_CERT=0
 RUN if [[ "$GENERATE_SELF_SIGNED_CERT" -eq 1 ]]; then openssl req -new -x509 -keyout /usr/app/conf/server.pem -out /usr/app/conf/server.pem -days 5000 -nodes -subj "/C=US/ST=Test/L=Test/O=Test/CN=www.test.com"; fi
-COPY --link ./app/conf/. /usr/app/conf/.
-RUN find /usr/app/src -type f -name '*.py' -print0 | xargs -0 dos2unix
 RUN rm -rf /pylibs && cp -a "$(python3 -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")" /pylibs
 RUN echo "$(python3 -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")" > /libpath.txt
+COPY --link ./app/src/. /usr/app/src/.
+RUN find /usr/app/src -type f -name '*.py' -print0 | xargs -0 dos2unix
 
 FROM common AS lean
-# Need those libs to run PyPy
-RUN apk add libbz2 libgcc
-# Needed for application
-RUN apk add sqlite-dev
+ARG DRIVER_SQLITE=1
+RUN if [[ "$DRIVER_SQLITE" -eq 1 ]]; then apk --no-cache add sqlite-dev; fi
 ARG DRIVER_PSYCOPG2=1
 RUN if [[ "$DRIVER_PSYCOPG2" -eq 1 ]]; then apk --no-cache add libpq; fi
 RUN mkdir -p /usr/app/state
-RUN mkdir -p /opt/pypy
-COPY --link --from=full /opt/pypy/. /opt/pypy/.
-ENV PATH="/opt/pypy/bin:${PATH}"
+RUN mkdir -p /python-runtime/
+COPY --link --from=full /python-runtime/. /python-runtime/.
+ENV PATH="/python-runtime/bin:${PATH}"
+RUN /bin/bash /python-runtime/lean_prepare.sh
 COPY --link --from=full /pylibs/. /pylibs/.
 COPY --link --from=full /libpath.txt /libpath.txt
-SHELL ["/bin/bash", "-c"]
 RUN rm -rf "$(cat /libpath.txt)" && mkdir -p "$(dirname "$(cat /libpath.txt)")" && ln -s /pylibs "$(cat /libpath.txt)"
 COPY --link --from=full /usr/app/src/. /usr/app/src/.
 COPY --link --from=full /usr/app/conf/. /usr/app/conf/.
 ARG ARG_DB_FORCE_URL_PROTOCOL=""
 ENV DB_FORCE_URL_PROTOCOL=${ARG_DB_FORCE_URL_PROTOCOL}
 ARG SUPPORTS_NGINX=1
-RUN if [[ "$DRIVER_PSYCOPG2" -eq 1 ]]; then apk --no-cache add nginx && ln -sf /dev/stdout /var/log/nginx/access.log && ln -sf /dev/stderr /var/log/nginx/error.log && mkdir -p /etc/nginx/; fi
-COPY --link ./app/meta/server/nginx/. /etc/nginx/.
+RUN if [[ "$SUPPORTS_NGINX" -eq 1 ]]; then apk --no-cache add nginx && ln -sf /dev/stdout /var/log/nginx/access.log && ln -sf /dev/stderr /var/log/nginx/error.log && mkdir -p /etc/nginx/; fi
+COPY --link ./docker/server/nginx/. /etc/nginx/.
 RUN find /etc/nginx/. -type f -print0 | xargs -0 dos2unix
 
 FROM lean AS gunicorn-runner
@@ -154,7 +141,6 @@ FROM lean AS hypercorn-runner
 WORKDIR /usr/app/src
 ENV PORT=443
 EXPOSE "$PORT"
-COPY --link --from=builder /uwsgi /uwsgi
 ENTRYPOINT [ "/bin/bash", "-c", "exec python3 -m hypercorn --bind 0.0.0.0:\"$PORT\" wsgi:app \"${@}\"", "--" ]
 
 FROM lean AS uwsgi-runner

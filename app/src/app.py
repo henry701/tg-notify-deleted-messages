@@ -34,7 +34,12 @@ from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import delete, select
 
 from telethon import TelegramClient, events
+
 import telethon
+
+override_max_chunk_size = int(os.getenv("TELETHON_OVERRIDE_MAX_CHUNK_SIZE", "-1"))
+if override_max_chunk_size > 0:
+    telethon.client.messages._MAX_CHUNK_SIZE = override_max_chunk_size
 
 import contextlib
 
@@ -787,7 +792,6 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
         preloaded_messages_this_dialog=0
 
         message : telethon.tl.custom.message.Message = None
-        telethon.client.messages._MAX_CHUNK_SIZE = 1
         async for message in client.iter_messages(full_peer, offset_date=iter_from_offset, reverse=True):
             nonlocal iterated_messages
             nonlocal preloaded_messages

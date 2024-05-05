@@ -647,12 +647,10 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
 
     database_url = get_db_url()
 
-    sqlalchemy_engine = create_engine(database_url, True)
-    sqlalchemy_session_maker = sessionmaker(bind=sqlalchemy_engine, future=True, expire_on_commit=False)
-
-    old_sqlalchemy_engine = create_engine(database_url, False, sqlalchemy_engine.pool)
-    alchemy_telegram_container = AlchemySessionContainer(engine = old_sqlalchemy_engine, table_base=Base, manage_tables=False, table_prefix=os.getenv("SESSION_TABLE_PREFIX", 'thon_'))
-    alchemy_telegram_container.core_mode = True
+    sqlalchemy_engine = create_engine(database_url)
+    sqlalchemy_session_maker = sessionmaker(bind=sqlalchemy_engine, expire_on_commit=False)
+    alchemy_telegram_container = AlchemySessionContainer(engine = sqlalchemy_engine, table_base=Base, manage_tables=False, table_prefix=os.getenv("SESSION_TABLE_PREFIX", 'thon_'))
+    #alchemy_telegram_container.core_mode = True
 
     create_database(sqlalchemy_engine)
 
@@ -823,13 +821,12 @@ async def gather_with_concurrency(n, *coros):
             return await coro
     return await asyncio.gather(*(sem_coro(c) for c in coros))
 
-def create_engine(database_url : str, future : bool, pool : Union[sqlalchemy.pool.Pool, None] = None):
+def create_engine(database_url : str, pool : Union[sqlalchemy.pool.Pool, None] = None):
     if pool is not None:
         logger.debug("Reusing Pool")
         return sqlalchemy.create_engine(
             database_url,
             echo=False,
-            future=future, # type: ignore
             pool=pool,
         )
     connect_args = json.loads(os.getenv('CUSTOM_SQLALCHEMY_CONNECT_ARGS')) if os.getenv('CUSTOM_SQLALCHEMY_CONNECT_ARGS') else {}
@@ -837,7 +834,6 @@ def create_engine(database_url : str, future : bool, pool : Union[sqlalchemy.poo
     return sqlalchemy.create_engine(
         database_url,
         echo=False,
-        future=future, # type: ignore
         connect_args=connect_args,
         **create_engine_add_args
     )

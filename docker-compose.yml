@@ -10,10 +10,10 @@ services:
     stdin_open: true
     tty: true
     environment:
-      DATABASE_URL: postgresql+pg8000://postgres:postgres@db/postgres
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@db/postgres
       #DATABASE_URL: sqlite:///file:/usr/app/state/db.sqlite3?uri=true
       PORT: 8085
-      #CUSTOM_SQLALCHEMY_CONNECT_ARGS: '{"keepalives": 1, "keepalives_idle": 30, "keepalives_interval": 10, "keepalives_count": 5}'
+      CUSTOM_SQLALCHEMY_CONNECT_ARGS: '{"keepalives": 1, "keepalives_idle": 30, "keepalives_interval": 10, "keepalives_count": 5}'
       #CUSTOM_SQLALCHEMY_CONNECT_ARGS: '{"check_same_thread": false}'
       CUSTOM_SQLALCHEMY_CREATE_ENGINE_ARGS: '{"pool_size": 10, "max_overflow": 2, "pool_recycle": 300, "pool_pre_ping": true, "pool_use_lifo": true}'
       #GUNICORN_CMD_ARGS: "--timeout 120"

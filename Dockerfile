@@ -84,6 +84,8 @@ RUN --mount=type=bind,source=./app/meta/requirements/db_cripto.txt,target=/usr/a
 RUN --mount=type=bind,source=./app/meta/requirements/perf.txt,target=/usr/app/meta/requirements/perf.txt pip3 install --no-cache -r /usr/app/meta/requirements/perf.txt
 ARG DRIVER_PSYCOPG2=1
 RUN --mount=type=bind,source=./app/meta/requirements/pgsql-psycopg2.txt,target=/usr/app/meta/requirements/pgsql-psycopg2.txt if [[ "$DRIVER_PSYCOPG2" -eq 1 ]]; then apk --no-cache add postgresql-dev libpq && pip3 install --no-cache -r /usr/app/meta/requirements/pgsql-psycopg2.txt; fi
+ARG DRIVER_PSYCOPG3=1
+RUN --mount=type=bind,source=./app/meta/requirements/pgsql-psycopg3.txt,target=/usr/app/meta/requirements/pgsql-psycopg3.txt if [[ "$DRIVER_PSYCOPG2" -eq 1 ]]; then apk --no-cache add postgresql-dev libpq && pip3 install --no-cache -r /usr/app/meta/requirements/pgsql-psycopg3.txt; fi
 ARG DRIVER_PG8000=1
 RUN --mount=type=bind,source=./app/meta/requirements/pgsql-pg8000.txt,target=/usr/app/meta/requirements/pgsql-pg8000.txt if [[ "$DRIVER_PG8000" -eq 1 ]]; then pip3 install --no-cache -r /usr/app/meta/requirements/pgsql-pg8000.txt; fi
 ARG SUPPORTS_GUNICORN=1
@@ -92,8 +94,9 @@ ARG SUPPORTS_HYPERCORN=1
 RUN --mount=type=bind,source=./app/meta/requirements/server-hypercorn.txt,target=/usr/app/meta/requirements/server-hypercorn.txt if [[ "$SUPPORTS_HYPERCORN" -eq 1 ]]; then pip3 install --no-cache -r /usr/app/meta/requirements/server-hypercorn.txt; fi
 ARG SUPPORTS_UWSGI=1
 RUN --mount=type=bind,source=./app/meta/requirements/server-uwsgi.txt,target=/usr/app/meta/requirements/server-uwsgi.txt if [[ "$SUPPORTS_UWSGI" -eq 1 ]]; then pip3 install --no-cache -r /usr/app/meta/requirements/server-uwsgi.txt; cp -a "$(which uwsgi)" /uwsgi; fi
+RUN apk --no-cache add git
+RUN git clone https://github.com/MatweyL/telethon-session-sqlalchemy /tmp/telethon-session-sqlalchemy && cd /tmp/telethon-session-sqlalchemy && git reset --hard 'fb19b1855e2c07a5d1ea0be181589d192c953cfa' && pip3 install . && cd .. && rm -rf /tmp/telethon-session-sqlalchemy
 COPY --link ./app/meta/monkey/. /usr/app/meta/monkey/.
-# lmao
 RUN sed -i "s/from sqlalchemy.orm.query import _ColumnEntity/from sqlalchemy.orm.context import _ColumnEntity/g" "$(python3 -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")/sqlalchemy_utils/functions/orm.py"
 RUN find "$(python3 -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")/alchemysession" -type f -exec sed -i 's/row.date.timestamp()/int(row.date.timestamp())/g' {} +
 # TODO: Always remember to make a pull request to the monkey'd libs, or move the monkey'd entities into their own separate packages where possible

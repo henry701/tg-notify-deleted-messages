@@ -124,8 +124,6 @@ COPY --link --from=full /libpath.txt /libpath.txt
 RUN rm -rf "$(cat /libpath.txt)" && mkdir -p "$(dirname "$(cat /libpath.txt)")" && ln -s /pylibs "$(cat /libpath.txt)"
 COPY --link --from=full /usr/app/src/. /usr/app/src/.
 COPY --link --from=full /usr/app/conf/. /usr/app/conf/.
-ARG ARG_DB_FORCE_URL_PROTOCOL=""
-ENV DB_FORCE_URL_PROTOCOL=${ARG_DB_FORCE_URL_PROTOCOL}
 ARG SUPPORTS_NGINX=1
 RUN if [[ "$SUPPORTS_NGINX" -eq 1 ]]; then apk --no-cache add nginx && ln -sf /dev/stdout /var/log/nginx/access.log && ln -sf /dev/stderr /var/log/nginx/error.log && mkdir -p /etc/nginx/; fi
 COPY --link ./docker/server/nginx/. /etc/nginx/.

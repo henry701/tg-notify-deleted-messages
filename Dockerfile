@@ -116,7 +116,8 @@ FROM common AS lean
 ARG DRIVER_SQLITE=1
 RUN if [[ "$DRIVER_SQLITE" -eq 1 ]]; then apk --no-cache add sqlite-dev; fi
 ARG DRIVER_PSYCOPG2=1
-RUN if [[ "$DRIVER_PSYCOPG2" -eq 1 ]]; then apk --no-cache add libpq; fi
+ARG DRIVER_PSYCOPG3=1
+RUN if [[ "$DRIVER_PSYCOPG2" -eq 1 || "$DRIVER_PSYCOPG3" -eq 1 ]]; then apk --no-cache add libpq; fi
 RUN mkdir -p /usr/app/state
 RUN mkdir -p /python-runtime/
 COPY --link --from=full /python-runtime/. /python-runtime/.

@@ -6,9 +6,6 @@ processes = []
 
 [env]
 
-# Initial Sleep period for preventing concurrent usage (kludge, update on cloud)
-SLEEP_INIT_SECONDS = "10"
-
 # Use HTTP or HTTPS for external communication
 USE_HTTPS = "0"
 # Instruct access via external port, or always use port 80 (presume routing)
@@ -29,13 +26,15 @@ MESSAGES_TTL_DAYS = "90"
 # Polling interval to clean messages away
 CLEAN_OLD_MESSAGES_SECONDS_INTERVAL = "900"
 
-PRELOAD_MESSAGES_DIALOG_CONCURRENCY = "1"
+#PRELOAD_MESSAGES_DIALOG_CONCURRENCY = "1"
 
-PYPY_GC_MAX = "100MB"
-MEDIA_FILE_SIZE_THRESHOLD = "1000000"
+PYPY_GC_MAX = "100MB" # Maybe someday
+#MEDIA_FILE_SIZE_THRESHOLD = "1000000"
+#TELETHON_OVERRIDE_MAX_CHUNK_SIZE="50"
 
+DB_FORCE_URL_PROTOCOL = 'postgresql+pg8000'
 CUSTOM_SQLALCHEMY_CONNECT_ARGS = '{"ssl_context": false}'
-CUSTOM_SQLALCHEMY_CREATE_ENGINE_ARGS = '{"pool_size": 6, "max_overflow": 1, "pool_recycle": 300, "pool_pre_ping": true, "pool_use_lifo": true}'
+CUSTOM_SQLALCHEMY_CREATE_ENGINE_ARGS = '{"pool_size": 18, "max_overflow": 1, "pool_recycle": 300, "pool_pre_ping": true, "pool_use_lifo": true}'
 
 [experimental]
 allowed_public_ports = []

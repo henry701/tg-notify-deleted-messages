@@ -240,7 +240,7 @@ download_semaphore = asyncio.Semaphore(int(os.getenv("MEDIA_DOWNLOADS_CONCURRENC
 file_size_threshold = int(os.getenv("MEDIA_FILE_SIZE_THRESHOLD", '0'))
 @retry(retry=retry_if_exception_type(IOError), stop=stop_after_attempt(3))
 async def get_message_media_blob(message : telethon.tl.custom.message.Message):
-    if not message or not message.media or not message.file or not message.file.size or (file_size_threshold > 0 and message.file.size < file_size_threshold):
+    if not message or not message.media or not message.file or not message.file.size or (file_size_threshold > 0 and message.file.size > file_size_threshold):
         return None
     async with download_semaphore:
         return await message.download_media(file=bytes)

@@ -26,15 +26,17 @@ MESSAGES_TTL_DAYS = "90"
 # Polling interval to clean messages away
 CLEAN_OLD_MESSAGES_SECONDS_INTERVAL = "900"
 
-#PRELOAD_MESSAGES_DIALOG_CONCURRENCY = "1"
+PRELOAD_MESSAGES_DIALOG_CONCURRENCY = "2"
 
 PYPY_GC_MAX = "100MB" # Maybe someday
-#MEDIA_FILE_SIZE_THRESHOLD = "1000000"
-#TELETHON_OVERRIDE_MAX_CHUNK_SIZE="50"
+MEDIA_FILE_SIZE_THRESHOLD = "1000000"
+TELETHON_OVERRIDE_MAX_CHUNK_SIZE="25"
 
-DB_FORCE_URL_PROTOCOL = 'postgresql+pg8000'
-CUSTOM_SQLALCHEMY_CONNECT_ARGS = '{"ssl_context": false}'
-CUSTOM_SQLALCHEMY_CREATE_ENGINE_ARGS = '{"pool_size": 18, "max_overflow": 1, "pool_recycle": 300, "pool_pre_ping": true, "pool_use_lifo": true}'
+DB_FORCE_URL_PROTOCOL = 'postgresql+psycopg'
+
+CUSTOM_SQLALCHEMY_CONNECT_ARGS = '{"keepalives": 1, "keepalives_idle": 2, "keepalives_interval": 5, "keepalives_count": 3}'
+#CUSTOM_SQLALCHEMY_CONNECT_ARGS: '{"check_same_thread": false}'
+CUSTOM_SQLALCHEMY_CREATE_ENGINE_ARGS = '{"pool_size": 8, "max_overflow": 2, "pool_recycle": 300, "pool_pre_ping": true, "pool_use_lifo": false}'
 
 [experimental]
 allowed_public_ports = []

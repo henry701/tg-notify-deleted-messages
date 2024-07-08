@@ -650,7 +650,7 @@ def create_app_and_start_jobs() -> Tuple[flask.Flask, Callable[[], None]]:
     sqlalchemy_engine = create_engine(database_url)
     sqlalchemy_session_maker = sessionmaker(bind=sqlalchemy_engine, expire_on_commit=False)
     alchemy_telegram_container = AlchemySessionContainer(engine = sqlalchemy_engine, table_base=Base, manage_tables=False, table_prefix=os.getenv("SESSION_TABLE_PREFIX", 'thon_'))
-    #alchemy_telegram_container.core_mode = True
+    alchemy_telegram_container.core_mode = True
 
     create_database(sqlalchemy_engine)
 

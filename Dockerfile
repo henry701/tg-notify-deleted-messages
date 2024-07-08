@@ -95,7 +95,7 @@ RUN --mount=type=bind,source=./app/meta/requirements/server-hypercorn.txt,target
 ARG SUPPORTS_UWSGI=1
 RUN --mount=type=bind,source=./app/meta/requirements/server-uwsgi.txt,target=/usr/app/meta/requirements/server-uwsgi.txt if [[ "$SUPPORTS_UWSGI" -eq 1 ]]; then pip3 install --no-cache -r /usr/app/meta/requirements/server-uwsgi.txt; cp -a "$(which uwsgi)" /uwsgi; fi
 RUN apk --no-cache add git
-RUN git clone https://github.com/MatweyL/telethon-session-sqlalchemy /tmp/telethon-session-sqlalchemy && cd /tmp/telethon-session-sqlalchemy && git reset --hard 'fb19b1855e2c07a5d1ea0be181589d192c953cfa' && pip3 install . && cd .. && rm -rf /tmp/telethon-session-sqlalchemy
+RUN git clone https://github.com/henry701/telethon-session-sqlalchemy /tmp/telethon-session-sqlalchemy && cd /tmp/telethon-session-sqlalchemy && git reset --hard '12615470b54e75055d2bc1d73d56b13ca41a1875' && pip3 install . && cd .. && rm -rf /tmp/telethon-session-sqlalchemy
 COPY --link ./app/meta/monkey/. /usr/app/meta/monkey/.
 RUN sed -i "s/from sqlalchemy.orm.query import _ColumnEntity/from sqlalchemy.orm.context import _ColumnEntity/g" "$(python3 -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")/sqlalchemy_utils/functions/orm.py"
 RUN find "$(python3 -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")/alchemysession" -type f -exec sed -i 's/row.date.timestamp()/int(row.date.timestamp())/g' {} +

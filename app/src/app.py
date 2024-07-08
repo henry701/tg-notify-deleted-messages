@@ -243,6 +243,7 @@ async def get_message_media_blob(message : telethon.tl.custom.message.Message):
     if not message or not message.media or not message.file or not message.file.size or (file_size_threshold > 0 and message.file.size > file_size_threshold):
         return None
     async with download_semaphore:
+        logger.info("Downloading file with %s bytes size", message.file.size)
         return await message.download_media(file=bytes)
 
 def get_store_message(
@@ -976,6 +977,7 @@ def add_informative_routes(client : TelegramClient, bot : Union[BotAssistant, No
                 asyncio.run_coroutine_threadsafe(bot.client.is_user_authorized(), loop).result()
             except Exception as e:
                 log_and_return_500("Telegram Error while checking Telegram Bot Communication: {e}".format(e=e))
+        logger.debug("Returning success from health check")
         return flask.Response(status=204)
 
     def log_and_return_500(message : str):

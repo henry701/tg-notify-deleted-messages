@@ -18,5 +18,5 @@ class TelegramMessage(Base):
     from_peer = relationship(TelegramPeer, lazy=False, cascade="all", foreign_keys=[from_peer_id])
     text = Column(encrypt_type_safer(UnicodeText()))
     media = Column(encrypt_type_safer(LargeBinary()))
-    timestamp = Column(TIMESTAMP(timezone=True), nullable=False)
+    timestamp = Column(TIMESTAMP(timezone=True), nullable=False, index = True)
     deleted = Column(Boolean(), nullable=False, default=False, index = True)

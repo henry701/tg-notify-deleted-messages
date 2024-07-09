@@ -812,6 +812,8 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
                 preloaded_messages = preloaded_messages + 1
                 preloaded_messages_this_dialog = preloaded_messages_this_dialog + 1
             messages = await client.get_messages(full_peer, limit=1, offset_id=message.id)
+            # Yield
+            await asyncio.sleep(0)
 
         logger.debug('Preloaded {preloaded_messages_this_dialog} existing messages for dialog={dialog}'.format(dialog=dialog.id, preloaded_messages_this_dialog=preloaded_messages_this_dialog))
 

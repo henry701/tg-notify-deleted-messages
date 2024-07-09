@@ -444,13 +444,14 @@ async def clean_old_messages_loop(sqlalchemy_session_maker : sessionmaker, secon
                 logger.info(
                     f"Deleted {str(count)} messages older than {str(delete_from_time)} from DB. Sleeping for {seconds_interval} seconds..."
                 )
-                with contextlib.suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(stop_event.wait(), seconds_interval)
-                if stop_event.is_set():
-                    logger.info('Stop event is set, breaking from Clean Old Messages Inner Loop!')
-                    break
             except Exception as e:
                 logger.critical("Error on Clean Old Messages Inner Loop Handler! {e}".format(e=e))
+            finally:
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(stop_event.wait(), seconds_interval)
+            if stop_event.is_set():
+                logger.info('Stop event is set, breaking from Clean Old Messages Inner Loop!')
+                break
     except Exception as e:
         logger.critical("Error on Clean Old Messages Outer Loop Handler! {e}".format(e=e))
     finally:
@@ -525,7 +526,7 @@ async def make_client(alchemy_telegram_container : AlchemySessionContainer, tele
             flood_sleep_threshold=65500,
             request_retries=50,
             connection_retries=None,
-            entity_cache_limit=1000,
+            entity_cache_limit=int(os.getenv("TELETHON_ENTITY_CACHE_LIMIT", '5000')),
             use_ipv6=bool(strtobool(os.getenv("USE_IPV6", '0'))),
         )
     
@@ -754,8 +755,8 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
         logger.info('No client connected and authorized, skipping preloading messages')
         return
     
-    iter_from_offset=datetime.now(tz=timezone.utc) - messages_ttl_delta
-    logger.info('Preloading existing messages from {iter_from_offset}'.format(iter_from_offset=iter_from_offset))
+    min_message_date=datetime.now(tz=timezone.utc) - messages_ttl_delta
+    logger.info('Preloading existing messages from {min_message_date}'.format(min_message_date=min_message_date))
 
     iterated_messages=0
     preloaded_messages=0
@@ -790,21 +791,30 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
         iterated_messages_this_dialog=0
         preloaded_messages_this_dialog=0
 
-        message : telethon.tl.custom.message.Message = None
-        async for message in client.iter_messages(full_peer, offset_date=iter_from_offset, reverse=True):
+        message : telethon.types.Message = None
+        messages : telethon.hints.TotalList[telethon.types.Message] = await client.get_messages(full_peer, limit=1)
+
+        while True:
+            if messages is None or len(messages) < 1:
+                break
+            message = messages[0]
+            if message is None or isinstance(message, telethon.types.MessageEmpty):
+                break
+            if message.date is None or message.date < min_message_date:
+                break
             nonlocal iterated_messages
             nonlocal preloaded_messages
             iterated_messages = iterated_messages + 1
             iterated_messages_this_dialog = iterated_messages_this_dialog + 1
             # Already checked chat for ignore, don't re-check ignore logic.
             message_result = await store_message_if_not_exists(message, False)
-            if message_result is False:
-                continue
-            preloaded_messages = preloaded_messages + 1
-            preloaded_messages_this_dialog = preloaded_messages_this_dialog + 1
+            if message_result is not False:
+                preloaded_messages = preloaded_messages + 1
+                preloaded_messages_this_dialog = preloaded_messages_this_dialog + 1
+            messages = await client.get_messages(full_peer, limit=1, offset_id=message.id)
 
         logger.debug('Preloaded {preloaded_messages_this_dialog} existing messages for dialog={dialog}'.format(dialog=dialog.id, preloaded_messages_this_dialog=preloaded_messages_this_dialog))
-        
+
     dialog_coros = []
     dialog : telethon.tl.custom.dialog.Dialog = None
     async for dialog in client.iter_dialogs():

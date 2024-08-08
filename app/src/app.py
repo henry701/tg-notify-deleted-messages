@@ -957,10 +957,27 @@ def add_informative_routes(client : TelegramClient, bot : Union[BotAssistant, No
         if bot is not None and bot.client is not None:
             bot.client.session.save()
         return flask.Response(status=204)
+    
+    consecutive_health_failures = 0
+    suicide_after_consecutive_health_failures = int(os.getenv('SUICIDE_AFTER_CONSECUTIVE_HEALTH_FAILURES', '0'))
 
     @flask_app.route('/health', methods=['GET'])
     @retry(retry=retry_if_exception_type((IOError, sqlalchemy.exc.DBAPIError)) | retry_if_result(lambda result: isinstance(result, flask.Response) and str(result.status_code).startswith('5')), stop=stop_after_attempt(3))
     def health():
+        returned = actual_health()
+        if returned:
+            returned_status_code = getattr(returned, 'status_code')
+            nonlocal consecutive_health_failures
+            if not str(returned_status_code).startswith('2'):
+                consecutive_health_failures = consecutive_health_failures + 1
+            else:
+                consecutive_health_failures = 0
+            if suicide_after_consecutive_health_failures and consecutive_health_failures > suicide_after_consecutive_health_failures:
+                logger.critical("Suiciding app, health check failed consecutively for %s times!", consecutive_health_failures, exc_info=True)
+                os._exit(1)
+        return returned
+
+    def actual_health():
         logger.debug("Health endpoint called")
         if not loop.is_running():
             return log_and_return_500("Event Loop not running")

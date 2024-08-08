@@ -792,26 +792,32 @@ async def preload_messages(client : TelegramClient, sqlalchemy_session_maker : s
         preloaded_messages_this_dialog=0
 
         message : telethon.types.Message = None
-        messages : telethon.hints.TotalList[telethon.types.Message] = await client.get_messages(full_peer, limit=1)
+        messages : telethon.hints.TotalList[telethon.types.Message] = await client.get_messages(full_peer, limit=telethon.client.messages._MAX_CHUNK_SIZE)
 
         while True:
             if messages is None or len(messages) < 1:
                 break
-            message = messages[0]
-            if message is None or isinstance(message, telethon.types.MessageEmpty):
+            last_message = None
+            for message in messages:
+                if message is None or isinstance(message, telethon.types.MessageEmpty):
+                    break
+                if message.date is None or message.date < min_message_date:
+                    break
+                last_message = message
+                nonlocal iterated_messages
+                nonlocal preloaded_messages
+                iterated_messages = iterated_messages + 1
+                iterated_messages_this_dialog = iterated_messages_this_dialog + 1
+                # Already checked chat for ignore, don't re-check ignore logic.
+                message_result = await store_message_if_not_exists(message, False)
+                if message_result is not False:
+                    preloaded_messages = preloaded_messages + 1
+                    preloaded_messages_this_dialog = preloaded_messages_this_dialog + 1
+                # Yield
+                await asyncio.sleep(0)
+            if not last_message:
                 break
-            if message.date is None or message.date < min_message_date:
-                break
-            nonlocal iterated_messages
-            nonlocal preloaded_messages
-            iterated_messages = iterated_messages + 1
-            iterated_messages_this_dialog = iterated_messages_this_dialog + 1
-            # Already checked chat for ignore, don't re-check ignore logic.
-            message_result = await store_message_if_not_exists(message, False)
-            if message_result is not False:
-                preloaded_messages = preloaded_messages + 1
-                preloaded_messages_this_dialog = preloaded_messages_this_dialog + 1
-            messages = await client.get_messages(full_peer, limit=1, offset_id=message.id)
+            messages = await client.get_messages(full_peer, limit=telethon.client.messages._MAX_CHUNK_SIZE, offset_id=message.id)
             # Yield
             await asyncio.sleep(0)
 

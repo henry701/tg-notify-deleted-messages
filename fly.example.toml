@@ -8,10 +8,6 @@ swap_size_mb = 512
 
 [env]
 
-# Use HTTP or HTTPS for external communication
-USE_HTTPS = "0"
-# Instruct access via external port, or always use port 80 (presume routing)
-USE_EXTERNAL_PORT = "1"
 # Manually inject PORT variable since this is not Heroku
 PORT = "8080"
 

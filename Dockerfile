@@ -105,8 +105,6 @@ RUN cp -av /usr/app/meta/monkey/. "$(python3 -c "from distutils.sysconfig import
 FROM builder AS full
 RUN mkdir -p /usr/app/conf/
 COPY --link ./app/conf/. /usr/app/conf/.
-ARG GENERATE_SELF_SIGNED_CERT=0
-RUN if [[ "$GENERATE_SELF_SIGNED_CERT" -eq 1 ]]; then openssl req -new -x509 -keyout /usr/app/conf/server.pem -out /usr/app/conf/server.pem -days 5000 -nodes -subj "/C=US/ST=Test/L=Test/O=Test/CN=www.test.com"; fi
 RUN rm -rf /pylibs && cp -a "$(python3 -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")" /pylibs
 RUN echo "$(python3 -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")" > /libpath.txt
 COPY --link ./app/src/. /usr/app/src/.

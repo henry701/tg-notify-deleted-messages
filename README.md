@@ -14,7 +14,7 @@ your interlocutors.
 docker-compose up -d app
 ```
 
-**P.S: You will need to send your telegram sign-in code to the URL logged by the application on the first time.**
+Then, interact with the application using the API described on [openapi.yaml](./openapi.yaml).
 
 ## Stop daemon
 
@@ -30,7 +30,7 @@ in the `MESSAGES_TTL_DAYS` environment variable, with default TTL: 14 days.
 You can change this interval by changing the `.env` file or by defining environment
 variables at the system level.
 
-**Be careful, your messages can fill your disk space.**
+**Be careful, your messages can fill your disk space!**
 
 ## Roadmap
 

@@ -1,0 +1,54 @@
+openapi: 3.0.3
+info:
+  title: tg-notify-deleted-messages API
+  version: 1.0.0
+paths:
+  /send_code:
+    get:
+      summary: Send code request
+      description: This endpoint triggers the sending of a code request to the user's devices for logging into Telegram.
+      responses:
+        '204':
+          description: Code sent successfully
+        '500':
+          description: Internal server error
+  /auth:
+    get:
+      summary: Authenticate user with code or password
+      description: Authenticates a user by accepting either a code or password, but not both. 
+      parameters:
+        - name: code
+          in: query
+          description: The authentication code sent to the user after calling the /send_code endpoint.
+          required: false
+          schema:
+            type: string
+        - name: password
+          in: query
+          description: The user's password for authentication, if they have a password registered with Telegram. Must be sent on a second request, after validating the code.
+          required: false
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Authentication successful
+        '400':
+          description: Both code and password are present. Either one or the other should be provided.
+        '401':
+          description: |
+            - Code or password missing when it's required for this request.
+            - Unregistered or duplicate authentication key (needs logoff to reset).
+            - Password needed for authentication (send another request with the password!).
+        '403':
+          description: Missing both code and password.
+        '500':
+          description: Unknown error during authentication or possible bug.
+  /logout:
+    get:
+      summary: Logout the user
+      description: Logs out the user and terminates the client connection.
+      responses:
+        '204':
+          description: Logout successful
+        '500':
+          description: Internal server error

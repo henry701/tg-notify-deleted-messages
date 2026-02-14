@@ -1,0 +1,73 @@
+variables:
+  DOCKER_HOST: tcp://docker:2376
+  DOCKER_TLS_CERTDIR: "/certs"
+  CONTAINER_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA
+  CONTAINER_LATEST: $CI_REGISTRY_IMAGE:latest
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
+  PYTHONPATH: "$CI_PROJECT_DIR/app/src"
+
+stages:
+  - test
+  - build
+  - push
+
+default:
+  image: python:3.12-slim
+  cache:
+    key: pip-$CI_COMMIT_REF_SLUG
+    paths:
+      - .pip-cache/
+
+unit-tests:
+  stage: test
+  before_script:
+    - python --version
+    - pip install --upgrade pip
+    - pip install --cache-dir "$PIP_CACHE_DIR" -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt
+  script:
+    - python -m unittest discover -s tests -p "test_*.py" -v
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+
+docker-build:
+  stage: build
+  image: docker:25
+  services:
+    - docker:25-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_HOST: tcp://docker:2376
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login $CI_REGISTRY -u $CI_REGISTRY_USER --password-stdin
+  script:
+    - docker build --target nginx-runner -t $CONTAINER_IMAGE .
+    - docker tag $CONTAINER_IMAGE $CONTAINER_LATEST
+    - docker save $CONTAINER_IMAGE $CONTAINER_LATEST -o container-image.tar
+  artifacts:
+    paths:
+      - container-image.tar
+    expire_in: 1 hour
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+
+docker-push:
+  stage: push
+  image: docker:25
+  services:
+    - docker:25-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_HOST: tcp://docker:2376
+  needs:
+    - job: docker-build
+      artifacts: true
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login $CI_REGISTRY -u $CI_REGISTRY_USER --password-stdin
+  script:
+    - docker load -i container-image.tar
+    - docker push $CONTAINER_IMAGE
+    - docker push $CONTAINER_LATEST
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'

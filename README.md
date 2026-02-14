@@ -22,6 +22,20 @@ Then, interact with the application using the API described on [openapi.yaml](./
 docker-compose stop app
 ```
 
+## Run tests
+
+```bash
+PYTHONPATH=app/src python3 -m unittest discover -s tests -p "test_*.py" -v
+```
+
+## GitLab CI/CD
+
+The repository includes a GitLab pipeline in `.gitlab-ci.yml` that:
+
+1. Runs unit tests.
+2. Builds the Docker image.
+3. Publishes Docker images to the GitLab Container Registry from the default branch.
+
 ## Disk usage and attachments
 
 `tg-notify-deleted-messages` stores message history for the time specified

@@ -1,8 +1,11 @@
 variables:
   DOCKER_HOST: tcp://docker:2376
   DOCKER_TLS_CERTDIR: "/certs"
+  DOCKER_BUILDKIT: "1"
   CONTAINER_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA
   CONTAINER_LATEST: $CI_REGISTRY_IMAGE:latest
+  CONTAINER_CACHE_DEFAULT: $CI_REGISTRY_IMAGE:buildcache-$CI_DEFAULT_BRANCH
+  CONTAINER_CACHE_BRANCH: $CI_REGISTRY_IMAGE:buildcache-$CI_COMMIT_REF_SLUG
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
   PYTHONPATH: "$CI_PROJECT_DIR/app/src"
 
@@ -89,10 +92,22 @@ docker-build:
     DOCKER_HOST: tcp://docker:2376
   before_script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login $CI_REGISTRY -u $CI_REGISTRY_USER --password-stdin
+    - docker buildx create --name ci-builder --driver docker-container --use || docker buildx use ci-builder
+    - docker buildx inspect --bootstrap
   script:
-    - docker build --target nginx-runner -t $CONTAINER_IMAGE .
-    - docker tag $CONTAINER_IMAGE $CONTAINER_LATEST
+    - |
+      docker buildx build \
+        --target nginx-runner \
+        --tag "$CONTAINER_IMAGE" \
+        --tag "$CONTAINER_LATEST" \
+        --cache-from "type=registry,ref=$CONTAINER_CACHE_DEFAULT" \
+        --cache-from "type=registry,ref=$CONTAINER_CACHE_BRANCH" \
+        --cache-to "type=registry,ref=$CONTAINER_CACHE_BRANCH,mode=max" \
+        --output type=docker \
+        .
     - docker save $CONTAINER_IMAGE $CONTAINER_LATEST -o container-image.tar
+  after_script:
+    - docker buildx rm ci-builder || true
   artifacts:
     paths:
       - container-image.tar

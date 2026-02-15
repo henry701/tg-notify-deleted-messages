@@ -103,14 +103,22 @@ docker-build:
     - docker buildx inspect --bootstrap
   script:
     - |
-      docker buildx build \
+      set -- \
         --target nginx-runner \
         --tag "$CONTAINER_IMAGE" \
         --tag "$CONTAINER_LATEST" \
-        --cache-from "type=registry,ref=$CONTAINER_CACHE_DEFAULT" \
-        --cache-from "type=registry,ref=$CONTAINER_CACHE_BRANCH" \
         --cache-to "type=registry,ref=$CONTAINER_CACHE_BRANCH,mode=max" \
-        --output type=docker \
+        --output type=docker
+
+      if docker buildx imagetools inspect "$CONTAINER_CACHE_BRANCH" >/dev/null 2>&1; then
+        set -- "$@" --cache-from "type=registry,ref=$CONTAINER_CACHE_BRANCH"
+      fi
+      if docker buildx imagetools inspect "$CONTAINER_CACHE_DEFAULT" >/dev/null 2>&1; then
+        set -- "$@" --cache-from "type=registry,ref=$CONTAINER_CACHE_DEFAULT"
+      fi
+
+      docker buildx build \
+        "$@" \
         .
     - docker save $CONTAINER_IMAGE $CONTAINER_LATEST -o container-image.tar
   after_script:

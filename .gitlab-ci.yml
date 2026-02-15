@@ -92,7 +92,8 @@ docker-build:
     DOCKER_HOST: tcp://docker:2376
   before_script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login $CI_REGISTRY -u $CI_REGISTRY_USER --password-stdin
-    - docker buildx create --name ci-builder --driver docker-container --use || docker buildx use ci-builder
+    - docker context create ci-dind-context || true
+    - docker buildx create ci-dind-context --name ci-builder --driver docker-container --use || docker buildx use ci-builder
     - docker buildx inspect --bootstrap
   script:
     - |

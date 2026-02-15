@@ -18,17 +18,66 @@ default:
     paths:
       - .pip-cache/
 
-unit-tests:
+.python-test-job:
   stage: test
   before_script:
     - python --version
     - pip install --upgrade pip
-    - pip install --cache-dir "$PIP_CACHE_DIR" -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt
-  script:
-    - python -m unittest discover -s tests -p "test_*.py" -v
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH'
+
+unit-tests:
+  extends: .python-test-job
+  script:
+    - pip install --cache-dir "$PIP_CACHE_DIR" -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt
+    - python -m unittest discover -s tests -p "test_*.py" -v
+
+integration-sqlite:
+  extends: .python-test-job
+  variables:
+    INTEGRATION_DATABASE_URL: "sqlite+pysqlite:////tmp/tgdel-integration.sqlite3"
+  script:
+    - rm -f /tmp/tgdel-integration.sqlite3
+    - pip install --cache-dir "$PIP_CACHE_DIR" -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt
+    - python -m unittest discover -s tests -p "integration_*.py" -v
+
+integration-postgres:
+  extends: .python-test-job
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
+  variables:
+    POSTGRES_DB: postgres
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+    INTEGRATION_DATABASE_URL: "postgresql+psycopg://postgres:postgres@postgres:5432/postgres"
+  script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends libpq5
+    - rm -rf /var/lib/apt/lists/*
+    - pip install --cache-dir "$PIP_CACHE_DIR" -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt -r app/meta/requirements/pgsql-psycopg3.txt
+    - |
+      python - <<'PY'
+      import os
+      import time
+      import sqlalchemy
+      from sqlalchemy import text
+
+      database_url = os.environ["INTEGRATION_DATABASE_URL"]
+      for attempt in range(60):
+          try:
+              engine = sqlalchemy.create_engine(database_url)
+              with engine.connect() as connection:
+                  connection.execute(text("SELECT 1"))
+              print(f"Postgres is ready after {attempt + 1} attempt(s).")
+              break
+          except Exception as exc:
+              if attempt == 59:
+                  raise RuntimeError(f"Postgres never became ready: {exc}") from exc
+              time.sleep(1)
+      PY
+    - python -m unittest discover -s tests -p "integration_*.py" -v
 
 docker-build:
   stage: build

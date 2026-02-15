@@ -28,13 +28,30 @@ docker-compose stop app
 PYTHONPATH=app/src python3 -m unittest discover -s tests -p "test_*.py" -v
 ```
 
+## Run integration tests
+
+SQLite (ephemeral file):
+
+```bash
+INTEGRATION_DATABASE_URL=sqlite+pysqlite:////tmp/tgdel-integration.sqlite3 \
+PYTHONPATH=app/src python3 -m unittest discover -s tests -p "integration_*.py" -v
+```
+
+Postgres:
+
+```bash
+INTEGRATION_DATABASE_URL=postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres \
+PYTHONPATH=app/src python3 -m unittest discover -s tests -p "integration_*.py" -v
+```
+
 ## GitLab CI/CD
 
 The repository includes a GitLab pipeline in `.gitlab-ci.yml` that:
 
 1. Runs unit tests.
-2. Builds the Docker image.
-3. Publishes Docker images to the GitLab Container Registry from the default branch.
+2. Runs integration tests for SQLite and Postgres in parallel.
+3. Builds the Docker image.
+4. Publishes Docker images to the GitLab Container Registry from the default branch.
 
 ## Disk usage and attachments
 

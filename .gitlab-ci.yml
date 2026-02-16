@@ -1,0 +1,152 @@
+variables:
+  DOCKER_HOST: tcp://docker:2376
+  DOCKER_TLS_CERTDIR: "/certs"
+  DOCKER_BUILDKIT: "1"
+  CONTAINER_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA
+  CONTAINER_LATEST: $CI_REGISTRY_IMAGE:latest
+  CONTAINER_CACHE_DEFAULT: $CI_REGISTRY_IMAGE:buildcache-$CI_DEFAULT_BRANCH
+  CONTAINER_CACHE_BRANCH: $CI_REGISTRY_IMAGE:buildcache-$CI_COMMIT_REF_SLUG
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
+  PYTHONPATH: "$CI_PROJECT_DIR/app/src"
+
+stages:
+  - test
+  - build
+  - push
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - when: never
+
+default:
+  image: python:3.12-slim
+  cache:
+    key: pip-$CI_COMMIT_REF_SLUG
+    paths:
+      - .pip-cache/
+
+.python-test-job:
+  stage: test
+  before_script:
+    - python --version
+    - pip install --upgrade pip
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+
+unit-tests:
+  extends: .python-test-job
+  script:
+    - pip install --cache-dir "$PIP_CACHE_DIR" -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt
+    - python -m unittest discover -s tests -p "test_*.py" -v
+
+integration-sqlite:
+  extends: .python-test-job
+  variables:
+    INTEGRATION_DATABASE_URL: "sqlite+pysqlite:////tmp/tgdel-integration.sqlite3"
+  script:
+    - rm -f /tmp/tgdel-integration.sqlite3
+    - pip install --cache-dir "$PIP_CACHE_DIR" -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt
+    - python -m unittest discover -s tests -p "integration_*.py" -v
+
+integration-postgres:
+  extends: .python-test-job
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
+  variables:
+    POSTGRES_DB: postgres
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+    INTEGRATION_DATABASE_URL: "postgresql+psycopg://postgres:postgres@postgres:5432/postgres"
+  script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends libpq5
+    - rm -rf /var/lib/apt/lists/*
+    - pip install --cache-dir "$PIP_CACHE_DIR" -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt -r app/meta/requirements/pgsql-psycopg3.txt
+    - |
+      python - <<'PY'
+      import os
+      import time
+      import sqlalchemy
+      from sqlalchemy import text
+
+      database_url = os.environ["INTEGRATION_DATABASE_URL"]
+      for attempt in range(60):
+          try:
+              engine = sqlalchemy.create_engine(database_url)
+              with engine.connect() as connection:
+                  connection.execute(text("SELECT 1"))
+              print(f"Postgres is ready after {attempt + 1} attempt(s).")
+              break
+          except Exception as exc:
+              if attempt == 59:
+                  raise RuntimeError(f"Postgres never became ready: {exc}") from exc
+              time.sleep(1)
+      PY
+    - python -m unittest discover -s tests -p "integration_*.py" -v
+
+docker-build:
+  stage: build
+  image: docker:25
+  services:
+    - docker:25-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_HOST: tcp://docker:2376
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login $CI_REGISTRY -u $CI_REGISTRY_USER --password-stdin
+    - docker context create ci-dind-context || true
+    - docker buildx create ci-dind-context --name ci-builder --driver docker-container --use || docker buildx use ci-builder
+    - docker buildx inspect --bootstrap
+  script:
+    - |
+      set -- \
+        --target nginx-runner \
+        --tag "$CONTAINER_IMAGE" \
+        --tag "$CONTAINER_LATEST" \
+        --cache-to "type=registry,ref=$CONTAINER_CACHE_BRANCH,mode=max" \
+        --output type=docker
+
+      if docker buildx imagetools inspect "$CONTAINER_CACHE_BRANCH" >/dev/null 2>&1; then
+        set -- "$@" --cache-from "type=registry,ref=$CONTAINER_CACHE_BRANCH"
+      fi
+      if docker buildx imagetools inspect "$CONTAINER_CACHE_DEFAULT" >/dev/null 2>&1; then
+        set -- "$@" --cache-from "type=registry,ref=$CONTAINER_CACHE_DEFAULT"
+      fi
+
+      docker buildx build \
+        "$@" \
+        .
+    - docker save $CONTAINER_IMAGE $CONTAINER_LATEST -o container-image.tar
+  after_script:
+    - docker buildx rm ci-builder || true
+  artifacts:
+    paths:
+      - container-image.tar
+    expire_in: 1 hour
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+
+docker-push:
+  stage: push
+  image: docker:25
+  services:
+    - docker:25-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_HOST: tcp://docker:2376
+  needs:
+    - job: docker-build
+      artifacts: true
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login $CI_REGISTRY -u $CI_REGISTRY_USER --password-stdin
+  script:
+    - docker load -i container-image.tar
+    - docker push $CONTAINER_IMAGE
+    - docker push $CONTAINER_LATEST
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'

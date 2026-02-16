@@ -4,6 +4,8 @@
 !.github
 !.gitignore
 !.dockerignore
+!.gitlab-ci.yml
+!.gitlab-ci.yaml
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

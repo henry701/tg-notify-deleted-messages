@@ -63,7 +63,7 @@ FROM common AS cpython-builder
 RUN mkdir /python-runtime # && cp -a "$(dirname "$(realpath "$(which python)")")" /python-runtime/. && cp -a /usr/lib/python*/. /python-runtime/python-libs
 COPY --link ./docker/python/cpython/. /python-runtime/.
 
-FROM ${PYTHON_RUNTIME}-builder as python-runtime
+FROM ${PYTHON_RUNTIME}-builder AS python-runtime
 
 FROM common AS builder
 RUN apk --no-cache add dos2unix

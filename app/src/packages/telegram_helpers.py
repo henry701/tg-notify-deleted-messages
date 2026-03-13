@@ -86,7 +86,11 @@ def to_telethon_input_peer(
     InputEncryptedChat,
     None,
 ]:
-    return PeerType(telegram_peer.type).to_input_type(
+    try:
+        peer_type = PeerType(telegram_peer.type)
+    except Exception:
+        return None
+    return peer_type.to_input_type(
         int(str(telegram_peer.peer_id)),
         int(str(telegram_peer.access_hash)) if telegram_peer.access_hash else None,
     )

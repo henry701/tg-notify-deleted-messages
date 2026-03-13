@@ -211,6 +211,7 @@ class ClientMainLoopJobTests(unittest.IsolatedAsyncioTestCase):
         session_maker_mock = MagicMock()
         notify_del = AsyncMock()
         notify_unknown = AsyncMock()
+        notify_edit = AsyncMock()  # Parameter for message edit notifications
         client_mock = AsyncMock()
         gather_mock = AsyncMock(return_value=[])
 
@@ -233,6 +234,7 @@ class ClientMainLoopJobTests(unittest.IsolatedAsyncioTestCase):
                 session_maker_mock,
                 notify_del,
                 notify_unknown,
+                notify_edit,  # Pass the new parameter
                 client_mock,
                 gather_mock,
             )

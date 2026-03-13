@@ -138,6 +138,7 @@ class AddEventHandlersTests(unittest.IsolatedAsyncioTestCase):
         session_maker_mock = MagicMock()
         notify_del = AsyncMock()
         notify_unknown = AsyncMock()
+        notify_edit = AsyncMock()
         gather_func = AsyncMock()
 
         await add_event_handlers(
@@ -145,10 +146,11 @@ class AddEventHandlersTests(unittest.IsolatedAsyncioTestCase):
             session_maker_mock,
             notify_del,
             notify_unknown,
+            notify_edit,
             gather_func,
         )
 
-        self.assertEqual(client_mock.add_event_handler.call_count, 2)
+        self.assertEqual(client_mock.add_event_handler.call_count, 3)
 
 
 class LoadMessagesFromDeletedEventTests(unittest.IsolatedAsyncioTestCase):

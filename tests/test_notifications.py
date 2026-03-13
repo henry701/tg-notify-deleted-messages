@@ -5,6 +5,8 @@ from packages.notifications import (
     get_base_notify_message_deletion,
     get_default_notify_message_deletion,
     get_default_notify_unknown_message,
+    get_base_notify_message_edit,
+    get_default_notify_message_edit,
 )
 
 
@@ -90,6 +92,67 @@ class NotificationsTests(unittest.IsolatedAsyncioTestCase):
         mock_session_maker.begin.assert_called_once()
         mock_session.merge.assert_called_once_with(mock_message)
         self.assertTrue(mock_message.deleted)
+
+    def test_get_base_notify_message_edit_returns_callable(self):
+        mock_session_maker = MagicMock()
+        result = get_base_notify_message_edit(mock_session_maker)
+        self.assertTrue(callable(result))
+
+    def test_get_default_notify_message_edit_returns_callable(self):
+        result = get_default_notify_message_edit()
+        self.assertTrue(callable(result))
+
+    @patch("packages.notifications.get_mention_text")
+    async def test_default_notify_message_edit_calls_send_message(
+        self, mock_get_mention
+    ):
+        mock_client = AsyncMock()
+        mock_message = MagicMock()
+        mock_message.media = None
+        mock_message.text = "Edited text"
+
+        mock_get_mention.side_effect = (
+            lambda client, peer: "TestUser"
+            if peer and hasattr(peer, "id") and peer.id == 123
+            else "TestChat"
+        )
+
+        mock_from_peer = MagicMock()
+        mock_from_peer.id = 123
+        mock_message.from_peer = mock_from_peer
+
+        mock_chat_peer = MagicMock()
+        mock_chat_peer.id = 456
+        mock_message.chat_peer = mock_chat_peer
+
+        notify_func = get_default_notify_message_edit()
+        await notify_func(mock_message, mock_client)
+
+        mock_client.send_message.assert_called_once()
+        call_args = mock_client.send_message.call_args
+        self.assertEqual(call_args.kwargs["entity"], "me")
+        self.assertIn("Edited message", call_args.kwargs["message"])
+        self.assertIn("TestUser", call_args.kwargs["message"])
+        self.assertIn("TestChat", call_args.kwargs["message"])
+        self.assertIn("Edited text", call_args.kwargs["message"])
+
+    async def test_base_notify_message_edit_merges_without_marking_deleted(self):
+        mock_session = MagicMock()
+        mock_session_maker = MagicMock()
+        mock_session_maker.begin.return_value.__enter__.return_value = mock_session
+        mock_session_maker.begin.return_value.__exit__.return_value = False
+
+        mock_message = MagicMock()
+        # Ensure the mock doesn't have a deleted attribute set to True by default
+        mock_message.deleted = False
+
+        notify_func = get_base_notify_message_edit(mock_session_maker)
+        await notify_func(mock_message, MagicMock())
+
+        mock_session_maker.begin.assert_called_once()
+        mock_session.merge.assert_called_once_with(mock_message)
+        # For edited messages, we don't mark as deleted (should remain False)
+        self.assertFalse(mock_message.deleted)
 
 
 if __name__ == "__main__":

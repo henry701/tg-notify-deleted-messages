@@ -9,12 +9,13 @@ from distutils.util import strtobool
 from typing import Any, Awaitable, Callable, List, Tuple, Union
 
 import sqlalchemy
+import sqlalchemy.exc
 import telethon
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.selectable import Select
 from telethon import TelegramClient, events
-from telethon.events import MessageDeleted, NewMessage
+from telethon.events import MessageDeleted, NewMessage, MessageEdited
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
 
 from packages.filtering import raw_should_ignore_message_chat
@@ -191,6 +192,117 @@ def get_on_new_message(sqlalchemy_session_maker: sessionmaker, client: TelegramC
     return on_new_message
 
 
+def get_on_message_edited(
+    client: TelegramClient,
+    sqlalchemy_session_maker: sessionmaker,
+    notify_message_edit: Callable[[TelegramMessage, TelegramClient], Awaitable[Any]],
+    gather_with_concurrency_func: Callable,
+):
+    ignore_channels = bool(strtobool(os.getenv("IGNORE_CHANNELS", "0")))
+    ignore_groups = bool(strtobool(os.getenv("IGNORE_GROUPS", "0")))
+    ignore_megagroups = bool(strtobool(os.getenv("IGNORE_MEGAGROUPS", "0")))
+    ignore_gigagroups = bool(strtobool(os.getenv("IGNORE_GIGAGROUPS", "0")))
+    member_ignore_threshold = int(os.getenv("MEMBER_IGNORE_THRESHOLD", "0"))
+    should_notify_outgoing_messages = bool(
+        strtobool(os.getenv("NOTIFY_OUTGOING_MESSAGES", "True"))
+    )
+    edited_messages_notification_concurrency = int(
+        os.getenv("EDITED_MESSAGES_NOTIFICATION_CONCURRENCY", "1")
+    )
+
+    @retry(
+        retry=retry_if_exception_type((IOError, sqlalchemy.exc.DBAPIError)),
+        stop=stop_after_attempt(3),
+    )
+    async def on_message_edited(event: MessageEdited.Event):
+        edited_messages_count = 1  # MessageEdited events only contain one message
+
+        if edited_messages_count == 0:
+            logger.debug("Got empty edited message event. Returning early!")
+            return
+
+        # Try to get the chat from the event
+        chat = None
+        try:
+            input_chat = await event.get_input_chat()
+            chat = await client.get_entity(input_chat) if input_chat else None
+        except ValueError:
+            pass
+
+        # Load the message from database with the current version
+        with sqlalchemy_session_maker.begin() as sqlalchemy_session:
+            (
+                messages,
+                query,
+                unloaded_ids,
+                filtered_away_ids,
+            ) = await load_messages_by_parameters(
+                [event.message_id],
+                chat,
+                client,
+                sqlalchemy_session,
+                ignore_channels,
+                ignore_groups,
+                ignore_megagroups,
+                ignore_gigagroups,
+                member_ignore_threshold,
+                should_notify_outgoing_messages,
+            )
+
+        edited_messages_count_str = str(edited_messages_count)
+        db_messages_count = len(messages)
+        db_messages_count_str = str(db_messages_count)
+        filtered_away_messages_count = len(filtered_away_ids)
+        filtered_away_messages_count_str = str(filtered_away_messages_count)
+
+        logger.info(
+            "Got {edited_messages_count} edited message. Has matching in DB: {db_messages_count}. Filtered away: {filtered_away_messages_count}".format(
+                edited_messages_count=edited_messages_count_str,
+                db_messages_count=db_messages_count_str,
+                filtered_away_messages_count=filtered_away_messages_count_str,
+            )
+        )
+
+        if edited_messages_count > db_messages_count + filtered_away_messages_count:
+            try:
+                logger.warning(
+                    "Got {edited_messages_count} edited messages but only found {db_messages_count} (with {filtered_away_messages_count} filtered away) matching in database! Query: {query_str}".format(
+                        edited_messages_count=edited_messages_count_str,
+                        db_messages_count=db_messages_count_str,
+                        filtered_away_messages_count=filtered_away_messages_count_str,
+                        query_str=str(
+                            query.compile(compile_kwargs={"literal_binds": True})
+                        )
+                        if query
+                        else "(no query)",
+                    )
+                )
+            except Exception as e:
+                logger.error(
+                    "Error while logging missing edited message (has {db_messages_count} of {edited_messages_count}, with {filtered_away_messages_count} filtered away): {e}".format(
+                        edited_messages_count=edited_messages_count_str,
+                        db_messages_count=db_messages_count_str,
+                        filtered_away_messages_count=filtered_away_messages_count_str,
+                        e=e,
+                    ),
+                    exc_info=True,
+                )
+
+        awaitables: List[Awaitable[Any]] = []
+        for message in messages:
+            awaitables.append(notify_message_edit(message, client))
+        if unloaded_ids and len(unloaded_ids):
+            # For edited messages, we might want to notify about unloaded messages differently
+            # For now, we'll skip notification for unloaded edited messages
+            pass
+        if len(awaitables) > 0:
+            await gather_with_concurrency_func(
+                edited_messages_notification_concurrency, *awaitables
+            )
+
+    return on_message_edited
+
+
 def get_should_ignore_message(client: TelegramClient):
     should_ignore_message_chat = get_should_ignore_message_chat(client)
 
@@ -265,14 +377,31 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
         )
         blob = await get_message_media_blob(message)
         with sqlalchemy_session_maker.begin() as sqlalchemy_session:
-            orm_message = TelegramMessage(
-                id=message.id,
-                from_peer=built_from_peer,
-                chat_peer=built_chat_peer,
-                text=message.message,
-                media=blob,
-                timestamp=message.date,
+            existing = (
+                sqlalchemy_session.query(TelegramMessage)
+                .filter(
+                    TelegramMessage.id == message.id,
+                    TelegramMessage.chat_peer_id == message.peer_id,
+                )
+                .first()
             )
+
+            if existing:
+                existing.text = message.message
+                existing.media = blob
+                existing.timestamp = message.date
+                existing.edit_date = message.date
+                orm_message = existing
+            else:
+                orm_message = TelegramMessage(
+                    id=message.id,
+                    from_peer=built_from_peer,
+                    chat_peer=built_chat_peer,
+                    text=message.message,
+                    media=blob,
+                    timestamp=message.date,
+                    edit_date=None,
+                )
             sqlalchemy_session.merge(orm_message)
         return True
 
@@ -318,6 +447,7 @@ async def add_event_handlers(
     notify_unknown_message: Callable[
         [List[int], MessageDeleted.Event, TelegramClient], Awaitable[Any]
     ],
+    notify_message_edit: Callable[[TelegramMessage, TelegramClient], Awaitable[Any]],
     gather_with_concurrency_func: Callable,
 ):
     logger.info("Adding event handlers")
@@ -337,5 +467,14 @@ async def add_event_handlers(
             gather_with_concurrency_func=gather_with_concurrency_func,
         ),
         events.MessageDeleted(),
+    )
+    client.add_event_handler(
+        get_on_message_edited(
+            client=client,
+            sqlalchemy_session_maker=sqlalchemy_session_maker,
+            notify_message_edit=notify_message_edit,
+            gather_with_concurrency_func=gather_with_concurrency_func,
+        ),
+        events.MessageEdited(),
     )
     logger.info("Added event handlers")

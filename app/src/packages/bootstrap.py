@@ -29,6 +29,8 @@ from packages.notifications import (
     get_base_notify_message_deletion,
     get_default_notify_message_deletion,
     get_default_notify_unknown_message,
+    get_base_notify_message_edit,
+    get_default_notify_message_edit,
 )
 from packages.models.root.TelegramMessage import TelegramMessage
 
@@ -177,6 +179,7 @@ async def client_main_loop_job(
     sqlalchemy_session_maker,
     configured_notify_message_deletion,
     configured_notify_unknown_message,
+    configured_notify_message_edit,
     client: TelegramClient,
     gather_with_concurrency_func: Callable,
 ):
@@ -184,7 +187,12 @@ async def client_main_loop_job(
         configured_notify_message_deletion = get_default_notify_message_deletion()
     if not configured_notify_unknown_message:
         configured_notify_unknown_message = get_default_notify_unknown_message()
+    if not configured_notify_message_edit:
+        configured_notify_message_edit = get_default_notify_message_edit()
     base_notify_message_deletion = get_base_notify_message_deletion(
+        sqlalchemy_session_maker=sqlalchemy_session_maker
+    )
+    base_notify_message_edit = get_base_notify_message_edit(
         sqlalchemy_session_maker=sqlalchemy_session_maker
     )
 
@@ -194,12 +202,19 @@ async def client_main_loop_job(
         await base_notify_message_deletion(message, client)
         await configured_notify_message_deletion(message, client)
 
+    async def actual_notify_message_edit(
+        message: TelegramMessage, client: TelegramClient
+    ):
+        await base_notify_message_edit(message, client)
+        await configured_notify_message_edit(message, client)
+
     add_event_handlers_task = asyncio.create_task(
         add_event_handlers(
             client,
             sqlalchemy_session_maker,
             actual_notify_message_deletion,
             configured_notify_unknown_message,
+            actual_notify_message_edit,
             gather_with_concurrency_func,
         )
     )

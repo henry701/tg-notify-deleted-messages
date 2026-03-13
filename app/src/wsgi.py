@@ -25,7 +25,7 @@ logging.getLogger("tgdel-app").setLevel(
 
 time.sleep(int(os.getenv("SLEEP_INIT_SECONDS", 10)))
 
-from app import create_app_and_start_jobs  # noqa: E402
+from packages.bootstrap import create_app_and_start_jobs  # noqa: E402
 
 loop = asyncio.events.new_event_loop()
 app, closer = create_app_and_start_jobs()

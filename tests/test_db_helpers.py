@@ -86,7 +86,7 @@ class DbHelpersTests(unittest.TestCase):
         self,
     ) -> None:
         metadata = MetaData()
-        parent = Table(
+        Table(
             "parent",
             metadata,
             Column("name", String(), primary_key=True),

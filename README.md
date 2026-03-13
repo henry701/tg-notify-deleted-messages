@@ -25,6 +25,12 @@ docker-compose stop app
 ## Run tests
 
 ```bash
+PYTHONPATH=app/src python3 -m pytest tests/test_*.py -v
+```
+
+Or with unittest discover:
+
+```bash
 PYTHONPATH=app/src python3 -m unittest discover -s tests -p "test_*.py" -v
 ```
 

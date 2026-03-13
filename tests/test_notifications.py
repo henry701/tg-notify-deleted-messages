@@ -75,6 +75,22 @@ class NotificationsTests(unittest.IsolatedAsyncioTestCase):
         call_args = mock_client.send_message.call_args
         self.assertEqual(call_args.kwargs["file"], mock_media)
 
+    async def test_base_notify_message_deletion_merges_and_marks_deleted(self):
+        mock_session = MagicMock()
+        mock_session_maker = MagicMock()
+        mock_session_maker.begin.return_value.__enter__.return_value = mock_session
+        mock_session_maker.begin.return_value.__exit__.return_value = False
+
+        mock_message = MagicMock()
+        mock_message.deleted = False
+
+        notify_func = get_base_notify_message_deletion(mock_session_maker)
+        await notify_func(mock_message, MagicMock())
+
+        mock_session_maker.begin.assert_called_once()
+        mock_session.merge.assert_called_once_with(mock_message)
+        self.assertTrue(mock_message.deleted)
+
 
 if __name__ == "__main__":
     unittest.main()

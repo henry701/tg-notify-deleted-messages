@@ -141,6 +141,23 @@ class FilteringTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(result)
 
+    async def test_ignores_discussion_groups_when_ignore_channels_true(self):
+        """Discussion groups (Channel with join_to_send=False) should be treated as channels."""
+        channel_mock = MagicMock(spec=telethon.types.Channel)
+        channel_mock.broadcast = False
+        channel_mock.join_to_send = False
+
+        result = await raw_should_ignore_message_chat(
+            channel_mock,
+            self.client_mock,
+            True,
+            False,
+            False,
+            False,
+            0,
+        )
+        self.assertTrue(result)
+
     async def test_does_not_ignore_below_member_threshold(self):
         channel_mock = MagicMock(spec=telethon.types.Channel)
         channel_mock.broadcast = False

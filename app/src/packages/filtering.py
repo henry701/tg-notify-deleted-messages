@@ -7,7 +7,6 @@ import telethon
 from telethon import TelegramClient
 
 from packages.models.root.TelegramMessage import TelegramMessage
-from packages.models.root.TelegramPeer import TelegramPeer
 
 
 async def raw_should_ignore_message_chat(
@@ -128,7 +127,7 @@ async def should_ignore_deleted_message(
     Returns:
         True if the deleted message notification should be ignored, False otherwise
     """
-    from packages.telegram_helpers import to_telethon_input_peer, build_peer_entity
+    from packages.telegram_helpers import build_peer_entity
 
     chat_peer_entity: Union[
         telethon.types.User, telethon.types.Chat, telethon.types.Channel, None

@@ -5,9 +5,11 @@ import functools
 import logging
 import os
 import signal
+import threading
+import concurrent
+import time
 from typing import Callable, Union
 
-from tenacity import retry, retry_if_exception_type, stop_after_attempt
 
 import telethon
 from alchemysession import AlchemySessionContainer
@@ -17,6 +19,18 @@ from telethon.errors.rpcerrorlist import AuthKeyDuplicatedError
 from distutils.util import strtobool
 
 from packages.bot_assistant import BotAssistant
+from packages.event_orchestration import add_event_handlers
+from packages.background_jobs import (
+    preload_messages,
+    clean_old_messages_loop,
+    messages_ttl_delta,
+)
+from packages.notifications import (
+    get_base_notify_message_deletion,
+    get_default_notify_message_deletion,
+    get_default_notify_unknown_message,
+)
+from packages.models.root.TelegramMessage import TelegramMessage
 
 logger = logging.getLogger("tgdel-bootstrap")
 
@@ -155,3 +169,240 @@ async def configure_bot(
         configured_notify_unknown_message = bot.notify_unknown_message
     logger.info("Configured Bot")
     return configured_notify_message_deletion, configured_notify_unknown_message, bot
+
+
+async def client_main_loop_job(
+    stop_event: asyncio.Event,
+    started_event: asyncio.Event,
+    sqlalchemy_session_maker,
+    configured_notify_message_deletion,
+    configured_notify_unknown_message,
+    client: TelegramClient,
+    gather_with_concurrency_func: Callable,
+):
+    if not configured_notify_message_deletion:
+        configured_notify_message_deletion = get_default_notify_message_deletion()
+    if not configured_notify_unknown_message:
+        configured_notify_unknown_message = get_default_notify_unknown_message()
+    base_notify_message_deletion = get_base_notify_message_deletion(
+        sqlalchemy_session_maker=sqlalchemy_session_maker
+    )
+
+    async def actual_notify_message_deletion(
+        message: TelegramMessage, client: TelegramClient
+    ):
+        await base_notify_message_deletion(message, client)
+        await configured_notify_message_deletion(message, client)
+
+    add_event_handlers_task = asyncio.create_task(
+        add_event_handlers(
+            client,
+            sqlalchemy_session_maker,
+            actual_notify_message_deletion,
+            configured_notify_unknown_message,
+            gather_with_concurrency_func,
+        )
+    )
+    preload_messages_task = asyncio.create_task(
+        preload_messages(client, sqlalchemy_session_maker)
+    )
+    old_messages_clean_loop_task = asyncio.create_task(
+        clean_old_messages_loop(
+            sqlalchemy_session_maker=sqlalchemy_session_maker,
+            seconds_interval=int(os.getenv("CLEAN_OLD_MESSAGES_SECONDS_INTERVAL", 900)),
+            ttl=messages_ttl_delta,
+            stop_event=stop_event,
+        )
+    )
+    stop_event_task = asyncio.create_task(stop_event.wait())
+
+    def on_stop(fut):
+        add_event_handlers_task.cancel()
+        preload_messages_task.cancel()
+
+    stop_event_task.add_done_callback(on_stop)
+    await asyncio.gather(add_event_handlers_task, preload_messages_task)
+    started_event.set()
+    await old_messages_clean_loop_task
+    await stop_event_task
+
+
+class Closer:
+    def __init__(self):
+        self.called = False
+        self.stop_event: Union[asyncio.Event, None] = None
+        self.started_event: Union[asyncio.Event, None] = None
+        self.client: Union[TelegramClient, None] = None
+        self.bot: Union[BotAssistant, None] = None
+
+    async def __call__(self):
+        close_coros = []
+        logger.info("Inside closer()")
+        if self.called:
+            logger.info("Closer re-entry detected, ignoring")
+            return
+        self.called = True
+        if self.stop_event is not None:
+            logger.info("Setting stop event flag")
+            self.stop_event.set()
+        if self.client is not None:
+            logger.info("Disconnecting Client")
+            disconnecter_coro = self.client.disconnect()
+            if disconnecter_coro is not None:
+                close_coros.append(disconnecter_coro)
+            self.client = None
+        if self.bot is not None:
+            logger.info("Disconnecting Bot")
+            close_coros.append(self.bot.__aexit__(None, None, None))
+        try:
+            await asyncio.gather(*close_coros)
+        except Exception:
+            logger.critical("Error while running closer coroutines!", exc_info=True)
+            os._exit(1)
+
+
+def make_sync_closer(closer: Closer, loop: asyncio.AbstractEventLoop):
+    def sync_closer():
+        ask_exit(None, loop, closer)
+
+    return sync_closer
+
+
+def worker_function(
+    loop: asyncio.AbstractEventLoop,
+    closer: Closer,
+    sync_closer: Callable,
+):
+    logger.info("Entering worker function!")
+    try:
+        asyncio.set_event_loop(loop)
+        closer.stop_event = asyncio.Event()
+        closer.started_event = asyncio.Event()
+        loop.run_forever()
+    except Exception as e:
+        logger.critical("Error on worker function! {e}".format(e=e), exc_info=True)
+        sync_closer()
+        os._exit(1)
+    finally:
+        logger.info("Exiting worker function!")
+    os._exit(0)
+
+
+def create_app_and_start_jobs() -> tuple:
+    from packages.background_jobs import gather_with_concurrency
+
+    loop: asyncio.AbstractEventLoop = asyncio.events.new_event_loop()
+    import nest_asyncio
+
+    nest_asyncio.apply(loop)
+
+    closer = Closer()
+
+    sync_closer = make_sync_closer(closer, loop)
+
+    add_signal_handlers(loop, closer)
+
+    from packages.db_bootstrap import create_engine
+    from packages.db_helpers import create_database, get_db_url
+    from packages.env_helpers import require_env
+    from packages.models import Base
+    from sqlalchemy.orm import sessionmaker
+
+    database_url = get_db_url()
+
+    sqlalchemy_engine = create_engine(database_url)
+    sqlalchemy_session_maker = sessionmaker(
+        bind=sqlalchemy_engine, expire_on_commit=False
+    )
+    alchemy_telegram_container = AlchemySessionContainer(
+        engine=sqlalchemy_engine,
+        table_base=Base,
+        manage_tables=False,
+        table_prefix=os.getenv("SESSION_TABLE_PREFIX", "thon_"),
+    )
+    alchemy_telegram_container.core_mode = True
+
+    create_database(sqlalchemy_engine)
+
+    telegram_api_id = require_env("TELEGRAM_API_ID")
+    telegram_api_hash = require_env("TELEGRAM_API_HASH")
+
+    target_chat = os.getenv("TARGET_CHAT", "me")
+
+    session_id = require_env("SESSION_ID")
+
+    configured_notify_message_deletion, configured_notify_unknown_message, bot = (
+        loop.run_until_complete(
+            configure_bot(
+                alchemy_telegram_container,
+                telegram_api_id,
+                telegram_api_hash,
+                target_chat,
+                session_id,
+            )
+        )
+    )
+    closer.bot = bot
+
+    client = loop.run_until_complete(
+        make_client(
+            alchemy_telegram_container,
+            telegram_api_id,
+            telegram_api_hash,
+            session_id,
+            loop,
+        )
+    )
+    closer.client = client
+
+    worker_thread = threading.Thread(
+        target=worker_function,
+        args=(loop, closer, sync_closer),
+        name="loop-app-client-bgthread",
+    )
+    worker_thread.start()
+
+    while (
+        closer.stop_event is None or closer.started_event is None
+    ) and worker_thread.is_alive:
+        time.sleep(0)
+
+    if closer.stop_event is None or closer.started_event is None:
+        raise RuntimeError(
+            "Worker thread died before setting stop_event and start_event!"
+        )
+
+    main_loop_job_future = asyncio.run_coroutine_threadsafe(
+        client_main_loop_job(
+            closer.stop_event,
+            closer.started_event,
+            sqlalchemy_session_maker,
+            configured_notify_message_deletion,
+            configured_notify_unknown_message,
+            client,
+            gather_with_concurrency,
+        ),
+        loop,
+    )
+
+    def handle_main_loop_job_future_end(main_inner_future: concurrent.futures.Future):
+        try:
+            main_inner_future.result()
+        except Exception as e:
+            if closer.stop_event.is_set():
+                return
+            logger.error("Error while running main job: {e}".format(e=e), exc_info=True)
+            sync_closer()
+            os._exit(1)
+        else:
+            logger.info("Main job loop finished, calling sync closer")
+            sync_closer()
+
+    main_loop_job_future.add_done_callback(handle_main_loop_job_future_end)
+
+    from packages.http import create_app
+
+    flask_app = create_app(client, bot, loop, sqlalchemy_session_maker, sync_closer)
+
+    logger.info("Returning from create_app_and_start_jobs")
+    return (flask_app, sync_closer)

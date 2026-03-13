@@ -6,16 +6,16 @@ from telethon.tl.types import (
     InputPeerChat,
     InputPeerSelf,
     InputPeerUser,
-    PeerChannel,
-    PeerChat,
-    PeerUser,
 )
 
 from packages.telegram_helpers import (
     get_mention_text,
     to_telethon_input_peer,
+    build_telegram_peer,
     build_peer_entity,
     refresh_client,
+    format_default_message_text,
+    format_default_unknown_message_text,
 )
 from packages.models.root.TelegramPeer import TelegramPeer
 from packages.models.support.PeerType import PeerType
@@ -224,6 +224,149 @@ class RefreshClientTests(unittest.IsolatedAsyncioTestCase):
         client.get_dialogs.assert_called_once()
         client.get_me.assert_called_once()
         client.get_messages.assert_called_once_with(limit=10)
+
+
+class BuildTelegramPeerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_returns_none_for_none_peer(self):
+        client = AsyncMock()
+        session_maker = MagicMock()
+        result = await build_telegram_peer(None, client, session_maker)
+        self.assertIsNone(result)
+
+
+class FormatDefaultMessageTextTests(unittest.IsolatedAsyncioTestCase):
+    async def test_formats_message_with_user_and_chat(self):
+        from packages.models.root.TelegramMessage import TelegramMessage
+        from packages.models.root.TelegramPeer import TelegramPeer
+        from packages.models.support.PeerType import PeerType
+
+        client = AsyncMock()
+        user_entity = MagicMock()
+        user_entity.id = 100
+        user_entity.first_name = "John"
+        user_entity.last_name = "Doe"
+        user_entity.title = None
+        user_entity.username = None
+        user_entity.phone = None
+        user_entity.chat_id = None
+
+        chat_entity = MagicMock()
+        chat_entity.id = 200
+        chat_entity.title = "Test Chat"
+        chat_entity.first_name = None
+        chat_entity.last_name = None
+        chat_entity.username = None
+        chat_entity.phone = None
+        chat_entity.chat_id = None
+
+        client.get_entity.side_effect = [user_entity, chat_entity]
+
+        from_peer = TelegramPeer(id=1, peer_id=100, access_hash=1, type=PeerType.USER)
+        chat_peer = TelegramPeer(id=2, peer_id=200, access_hash=2, type=PeerType.CHAT)
+
+        message = TelegramMessage(
+            id=1,
+            from_peer=from_peer,
+            chat_peer=chat_peer,
+            text="Hello",
+            media=None,
+            timestamp=None,
+        )
+
+        with patch(
+            "packages.telegram_helpers.to_telethon_input_peer", return_value=MagicMock()
+        ):
+            result = await format_default_message_text(client, message)
+
+        self.assertIn("John Doe", result)
+        self.assertIn("Test Chat", result)
+        self.assertIn("Hello", result)
+
+    async def test_formats_message_with_no_text(self):
+        from packages.models.root.TelegramMessage import TelegramMessage
+        from packages.models.root.TelegramPeer import TelegramPeer
+        from packages.models.support.PeerType import PeerType
+
+        client = AsyncMock()
+        user_entity = MagicMock()
+        user_entity.id = 100
+        user_entity.first_name = "John"
+        user_entity.title = None
+        user_entity.last_name = ""
+        user_entity.username = None
+        user_entity.phone = None
+        user_entity.chat_id = None
+
+        chat_entity = MagicMock()
+        chat_entity.id = 200
+        chat_entity.title = "Chat"
+        chat_entity.first_name = None
+        chat_entity.last_name = None
+        chat_entity.username = None
+        chat_entity.phone = None
+        chat_entity.chat_id = None
+
+        client.get_entity.side_effect = [user_entity, chat_entity]
+
+        from_peer = TelegramPeer(id=1, peer_id=100, access_hash=1, type=PeerType.USER)
+        chat_peer = TelegramPeer(id=2, peer_id=200, access_hash=2, type=PeerType.CHAT)
+
+        message = TelegramMessage(
+            id=1,
+            from_peer=from_peer,
+            chat_peer=chat_peer,
+            text=None,
+            media=None,
+            timestamp=None,
+        )
+
+        with patch(
+            "packages.telegram_helpers.to_telethon_input_peer", return_value=MagicMock()
+        ):
+            result = await format_default_message_text(client, message)
+
+        self.assertIn("Deleted message", result)
+        self.assertNotIn("**Message Text:**", result)
+
+
+class FormatDefaultUnknownMessageTextTests(unittest.IsolatedAsyncioTestCase):
+    async def test_formats_unknown_deleted_messages(self):
+        client = AsyncMock()
+        chat_entity = MagicMock()
+        chat_entity.id = 300
+        chat_entity.title = "Unknown Chat"
+        chat_entity.first_name = None
+        chat_entity.last_name = None
+        chat_entity.username = None
+        chat_entity.phone = None
+        chat_entity.chat_id = None
+        client.get_entity.return_value = chat_entity
+
+        event_mock = AsyncMock()
+        event_mock.get_input_chat = AsyncMock(return_value=MagicMock())
+
+        result = await format_default_unknown_message_text(
+            client, [10, 20, 30], event_mock
+        )
+
+        self.assertIn("Unknown deleted messages", result)
+        self.assertIn("Unknown Chat", result)
+        self.assertIn("3 total", result)
+        self.assertIn("10", result)
+        self.assertIn("20", result)
+        self.assertIn("30", result)
+
+    async def test_handles_none_chat(self):
+        client = AsyncMock()
+        client.get_entity.return_value = None
+
+        event_mock = AsyncMock()
+        event_mock.get_input_chat = AsyncMock(return_value=None)
+
+        result = await format_default_unknown_message_text(client, [5], event_mock)
+
+        self.assertIn("Anonymous", result)
+        self.assertIn("1 total", result)
 
 
 if __name__ == "__main__":

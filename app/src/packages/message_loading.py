@@ -15,7 +15,6 @@ from packages.filtering import (
 from packages.models.root.TelegramMessage import TelegramMessage
 from packages.models.root.TelegramPeer import TelegramPeer
 from packages.models.support.PeerType import PeerType
-from packages.telegram_helpers import build_peer_entity
 
 
 async def load_messages_from_db(
@@ -103,7 +102,6 @@ async def load_messages_by_parameters(
         - unloaded_ids: IDs not found in the database
         - filtered_away_ids: IDs that were filtered out
     """
-    from sqlalchemy.sql.selectable import Select
 
     # If we know the chat where the event came from,
     # and it should be ignored, then don't even bother

@@ -5,7 +5,6 @@ from typing import Any, Awaitable, Callable, List
 from sqlalchemy.orm import sessionmaker
 from telethon import TelegramClient
 from telethon.events.messagedeleted import MessageDeleted
-from telethon.events.messageedited import MessageEdited
 
 from packages.models.root.TelegramMessage import TelegramMessage
 from packages.telegram_helpers import (

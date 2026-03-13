@@ -154,7 +154,6 @@ class PreloadMessagesTests(unittest.IsolatedAsyncioTestCase):
         entity_mock = MagicMock()
         client_mock.get_entity = AsyncMock(return_value=entity_mock)
 
-
         msg_mock = MagicMock()
         msg_mock.id = 1
         msg_mock.date = datetime.now(tz=timezone.utc)

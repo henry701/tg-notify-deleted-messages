@@ -1,20 +1,42 @@
 from enum import IntEnum
 from typing import Type, Union
 
-from telethon.tl.types import Channel, ChannelFull, Chat, ChatFull, EncryptedChat, InputChannel, InputEncryptedChat, InputPeerChannel, InputPeerChat, InputPeerSelf, InputPeerUser, InputUser, PeerChannel, PeerChat, PeerUser, User, UserFull
+from telethon.tl.types import (
+    Channel,
+    ChannelFull,
+    Chat,
+    ChatFull,
+    EncryptedChat,
+    InputChannel,
+    InputEncryptedChat,
+    InputPeerChannel,
+    InputPeerChat,
+    InputPeerSelf,
+    InputPeerUser,
+    InputUser,
+    PeerChannel,
+    PeerChat,
+    PeerUser,
+    User,
+    UserFull,
+)
+
 
 class PeerType(IntEnum):
-
     USER = 1
     CHANNEL = 2
     CHAT = 3
     ENCRYPTED_CHAT = 4
 
     @staticmethod
-    def from_type(_type : Type, mandatory = False):
-        if issubclass(_type, (PeerUser, User, UserFull, InputUser, InputPeerUser, InputPeerSelf)):
+    def from_type(_type: Type, mandatory=False):
+        if issubclass(
+            _type, (PeerUser, User, UserFull, InputUser, InputPeerUser, InputPeerSelf)
+        ):
             return PeerType.USER
-        if issubclass(_type, (PeerChannel, Channel, ChannelFull, InputChannel, InputPeerChannel)):
+        if issubclass(
+            _type, (PeerChannel, Channel, ChannelFull, InputChannel, InputPeerChannel)
+        ):
             return PeerType.CHANNEL
         if issubclass(_type, (PeerChat, Chat, ChatFull, InputPeerChat)):
             return PeerType.CHAT
@@ -24,7 +46,16 @@ class PeerType(IntEnum):
             raise ValueError(f"Unable to get PeerType for type: {_type}")
         return None
 
-    def to_input_type(self, id : int, access_hash : Union[int, None], mandatory = False) -> Union[InputPeerUser, InputPeerChannel, InputPeerChat, InputPeerSelf, InputEncryptedChat, None]:
+    def to_input_type(
+        self, id: int, access_hash: Union[int, None], mandatory=False
+    ) -> Union[
+        InputPeerUser,
+        InputPeerChannel,
+        InputPeerChat,
+        InputPeerSelf,
+        InputEncryptedChat,
+        None,
+    ]:
         if self == PeerType.USER:
             return InputPeerUser(id, access_hash) if access_hash else InputPeerSelf()
         if self == PeerType.CHANNEL:

@@ -14,7 +14,9 @@ from packages.db_helpers import (
 
 class DbHelpersTests(unittest.TestCase):
     def test_get_db_url_normalizes_postgres_scheme(self) -> None:
-        with patch.dict(os.environ, {"DATABASE_URL": "postgres://user:pass@db/app"}, clear=True):
+        with patch.dict(
+            os.environ, {"DATABASE_URL": "postgres://user:pass@db/app"}, clear=True
+        ):
             self.assertEqual(get_db_url(), "postgresql://user:pass@db/app")
 
     def test_get_db_url_forces_protocol_when_requested(self) -> None:
@@ -34,10 +36,18 @@ class DbHelpersTests(unittest.TestCase):
     def test_should_encrypt_column_true_for_identifier_column(self) -> None:
         self.assertTrue(should_encrypt_column(Column("id", BigInteger())))
 
-    def test_should_encrypt_column_traverser_false_for_autoincrement_column(self) -> None:
-        self.assertFalse(should_encrypt_column_traverser(Column("id", BigInteger(), autoincrement=True)))
+    def test_should_encrypt_column_traverser_false_for_autoincrement_column(
+        self,
+    ) -> None:
+        self.assertFalse(
+            should_encrypt_column_traverser(
+                Column("id", BigInteger(), autoincrement=True)
+            )
+        )
 
-    def test_should_encrypt_column_traverser_false_for_fk_to_non_encrypted_column(self) -> None:
+    def test_should_encrypt_column_traverser_false_for_fk_to_non_encrypted_column(
+        self,
+    ) -> None:
         metadata = MetaData()
         Table("parent", metadata, Column("counter", Integer(), primary_key=True))
         child = Table(
@@ -48,4 +58,6 @@ class DbHelpersTests(unittest.TestCase):
         self.assertFalse(should_encrypt_column_traverser(child.c.parent_counter))
 
     def test_should_encrypt_column_even_if_not_allowed_type_for_suffix_id(self) -> None:
-        self.assertTrue(should_encrypt_column_even_if_not_allowed_type(Column("chat_id", Integer())))
+        self.assertTrue(
+            should_encrypt_column_even_if_not_allowed_type(Column("chat_id", Integer()))
+        )

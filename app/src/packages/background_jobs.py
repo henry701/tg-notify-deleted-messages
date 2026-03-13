@@ -47,9 +47,7 @@ async def clean_old_messages_loop(
                     f"Deleted {str(count)} messages older than {str(delete_from_time)} from DB. Sleeping for {seconds_interval} seconds..."
                 )
             except Exception as e:
-                logger.critical(
-                    "Error on Clean Old Messages Inner Loop Handler! {e}".format(e=e)
-                )
+                logger.critical(f"Error on Clean Old Messages Inner Loop Handler! {e}")
             finally:
                 with contextlib.suppress(asyncio.TimeoutError):
                     await asyncio.wait_for(stop_event.wait(), seconds_interval)

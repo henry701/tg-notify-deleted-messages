@@ -5,46 +5,66 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql.expression import select
 from telethon.client.telegramclient import TelegramClient
 from telethon.events.messagedeleted import MessageDeleted
-from telethon.tl.types import InputPeerChannel, InputPeerChat, InputPeerUser, PeerChannel, PeerChat, PeerUser, InputPeerSelf, InputEncryptedChat
+from telethon.tl.types import (
+    InputPeerChannel,
+    InputPeerChat,
+    InputPeerUser,
+    PeerChannel,
+    PeerChat,
+    PeerUser,
+    InputPeerSelf,
+    InputEncryptedChat,
+)
 from packages.models.root.TelegramMessage import TelegramMessage
 from packages.models.root.TelegramPeer import TelegramPeer
 from packages.models.support.PeerType import PeerType
 
+
 async def get_mention_text(entity):
     if not entity:
         mention_username = "Anonymous"
-    elif getattr(entity, 'title', None):
+    elif getattr(entity, "title", None):
         mention_username = entity.title
-    elif getattr(entity, 'first_name', None) or getattr(entity, 'last_name', None):
-        mention_username = \
-            (getattr(entity, 'first_name', '') + " " if getattr(entity, 'first_name', '') else '') + \
-            (getattr(entity, 'last_name', '') if getattr(entity, 'last_name', '') else '')
-    elif getattr(entity, 'username', None):
+    elif getattr(entity, "first_name", None) or getattr(entity, "last_name", None):
+        mention_username = (
+            getattr(entity, "first_name", "") + " "
+            if getattr(entity, "first_name", "")
+            else ""
+        ) + (
+            getattr(entity, "last_name", "") if getattr(entity, "last_name", "") else ""
+        )
+    elif getattr(entity, "username", None):
         mention_username = entity.username
-    elif getattr(entity, 'phone', None):
+    elif getattr(entity, "phone", None):
         mention_username = entity.phone
     else:
-        mention_username = getattr(entity, 'id', None)
+        mention_username = getattr(entity, "id", None)
         if not mention_username:
-            mention_username = getattr(entity, 'chat_id', None)
+            mention_username = getattr(entity, "chat_id", None)
     if not mention_username:
         mention_username = "UNKNOWN. Type name: " + type(entity).__name__
     return mention_username
 
-async def build_telegram_peer(peer : Union[PeerUser, PeerChat, PeerChannel, None], client : TelegramClient, sqlalchemy_session_maker : sessionmaker) -> Union[TelegramPeer, None]:
+
+async def build_telegram_peer(
+    peer: Union[PeerUser, PeerChat, PeerChannel, None],
+    client: TelegramClient,
+    sqlalchemy_session_maker: sessionmaker,
+) -> Union[TelegramPeer, None]:
     async def find_existing_peer(tele_peer, sqlalchemy_session):
         return sqlalchemy_session.execute(
             select(TelegramPeer)
-                .where(TelegramPeer.peer_id == tele_peer.peer_id)
-                .where(TelegramPeer.type == tele_peer.type)
+            .where(TelegramPeer.peer_id == tele_peer.peer_id)
+            .where(TelegramPeer.type == tele_peer.type)
         ).scalar()
+
     if peer is None:
         return None
-    got_entity = (await client.get_entity(peer))
+    got_entity = await client.get_entity(peer)
     tele_peer = TelegramPeer(
-        peer_id = await client.get_peer_id(peer=got_entity, add_mark=False),
-        type = PeerType.from_type(type(got_entity), mandatory=True),
-        access_hash = getattr(got_entity, 'access_hash', None),
+        peer_id=await client.get_peer_id(peer=got_entity, add_mark=False),
+        type=PeerType.from_type(type(got_entity), mandatory=True),
+        access_hash=getattr(got_entity, "access_hash", None),
     )
     with sqlalchemy_session_maker.begin() as sqlalchemy_session:
         existing_peer = await find_existing_peer(tele_peer, sqlalchemy_session)
@@ -55,18 +75,52 @@ async def build_telegram_peer(peer : Union[PeerUser, PeerChat, PeerChannel, None
     with sqlalchemy_session_maker.begin() as sqlalchemy_session:
         return await find_existing_peer(tele_peer, sqlalchemy_session)
 
-def to_telethon_input_peer(telegram_peer : TelegramPeer) -> Union[InputPeerUser, InputPeerChannel, InputPeerChat, InputPeerSelf, InputEncryptedChat, None]:
-    return PeerType(telegram_peer.type).to_input_type(int(str(telegram_peer.peer_id)), int(str(telegram_peer.access_hash)) if telegram_peer.access_hash else None)
 
-async def refresh_client(client : TelegramClient):
+def to_telethon_input_peer(
+    telegram_peer: TelegramPeer,
+) -> Union[
+    InputPeerUser,
+    InputPeerChannel,
+    InputPeerChat,
+    InputPeerSelf,
+    InputEncryptedChat,
+    None,
+]:
+    return PeerType(telegram_peer.type).to_input_type(
+        int(str(telegram_peer.peer_id)),
+        int(str(telegram_peer.access_hash)) if telegram_peer.access_hash else None,
+    )
+
+
+async def refresh_client(client: TelegramClient):
     await client.get_dialogs()
     await client.get_me()
     await client.get_messages(limit=10)
 
-async def format_default_message_text(client : TelegramClient, message : TelegramMessage, tried : bool = False):
+
+async def build_peer_entity(peer: TelegramPeer, client: TelegramClient):
+    if peer is None:
+        return None
+    input_peer = to_telethon_input_peer(peer)
+    if input_peer is None:
+        return None
+    return await client.get_entity(input_peer)
+
+
+async def format_default_message_text(
+    client: TelegramClient, message: TelegramMessage, tried: bool = False
+):
     try:
-        user = await client.get_entity(to_telethon_input_peer(message.from_peer)) if message.from_peer else None
-        chat = await client.get_entity(to_telethon_input_peer(message.chat_peer)) if message.chat_peer else None
+        user = (
+            await client.get_entity(to_telethon_input_peer(message.from_peer))
+            if message.from_peer
+            else None
+        )
+        chat = (
+            await client.get_entity(to_telethon_input_peer(message.chat_peer))
+            if message.chat_peer
+            else None
+        )
     except ValueError:
         if tried:
             raise
@@ -84,7 +138,13 @@ async def format_default_message_text(client : TelegramClient, message : Telegra
         text += "**Message Text:** " + message.text
     return text
 
-async def format_default_unknown_message_text(client : TelegramClient, message_ids : List[int], event : MessageDeleted.Event, tried : bool = False) -> str:
+
+async def format_default_unknown_message_text(
+    client: TelegramClient,
+    message_ids: List[int],
+    event: MessageDeleted.Event,
+    tried: bool = False,
+) -> str:
     try:
         input_chat = await event.get_input_chat()
         chat = await client.get_entity(input_chat) if input_chat else None
@@ -92,11 +152,18 @@ async def format_default_unknown_message_text(client : TelegramClient, message_i
         if tried:
             raise
         await refresh_client(client)
-        return await format_default_unknown_message_text(client=client, message_ids=message_ids, event=event, tried=True)
+        return await format_default_unknown_message_text(
+            client=client, message_ids=message_ids, event=event, tried=True
+        )
     mention_chatname = await get_mention_text(chat)
     text = "**Unknown deleted messages** on chat [{chatname}](tg://user?id={chatid})\n".format(
         chatname=mention_chatname,
         chatid=(str(chat.id) if chat else "0"),
     )
-    text += "**Message IDs (" + str(len(message_ids)) + " total):** " + ', '.join(str(x) for x in message_ids)
+    text += (
+        "**Message IDs ("
+        + str(len(message_ids))
+        + " total):** "
+        + ", ".join(str(x) for x in message_ids)
+    )
     return text

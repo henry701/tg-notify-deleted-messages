@@ -20,6 +20,7 @@ import flask
 
 from sqlalchemy.sql.selectable import Select
 from telethon.errors.rpcerrorlist import AuthKeyDuplicatedError
+from packages.db_bootstrap import create_engine, create_session_factory
 from packages.db_helpers import create_database, get_db_url
 
 from packages.env_helpers import require_env
@@ -1108,29 +1109,6 @@ async def gather_with_concurrency(n, *coros):
             return await coro
 
     return await asyncio.gather(*(sem_coro(c) for c in coros))
-
-
-def create_engine(database_url: str, pool: Union[sqlalchemy.pool.Pool, None] = None):
-    if pool is not None:
-        logger.debug("Reusing Pool")
-        return sqlalchemy.create_engine(
-            database_url,
-            echo=False,
-            pool=pool,
-        )
-    connect_args = (
-        json.loads(os.getenv("CUSTOM_SQLALCHEMY_CONNECT_ARGS"))
-        if os.getenv("CUSTOM_SQLALCHEMY_CONNECT_ARGS")
-        else {}
-    )
-    create_engine_add_args = (
-        json.loads(os.getenv("CUSTOM_SQLALCHEMY_CREATE_ENGINE_ARGS"))
-        if os.getenv("CUSTOM_SQLALCHEMY_CREATE_ENGINE_ARGS")
-        else {}
-    )
-    return sqlalchemy.create_engine(
-        database_url, echo=False, connect_args=connect_args, **create_engine_add_args
-    )
 
 
 def create_app(

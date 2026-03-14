@@ -7,6 +7,7 @@ from packages.notifications import (
     get_default_notify_unknown_message,
     get_base_notify_message_edit,
     get_default_notify_message_edit,
+    get_mention_text,
 )
 
 
@@ -153,6 +154,159 @@ class NotificationsTests(unittest.IsolatedAsyncioTestCase):
         mock_session.merge.assert_called_once_with(mock_message)
         # For edited messages, we don't mark as deleted (should remain False)
         self.assertFalse(mock_message.deleted)
+
+
+class GetMentionTextTests(unittest.IsolatedAsyncioTestCase):
+    async def test_returns_unknown_when_peer_is_none(self):
+        mock_client = AsyncMock()
+        result = await get_mention_text(mock_client, None)
+        self.assertEqual(result, "Unknown")
+
+    async def test_returns_entity_title_when_present(self):
+        mock_client = AsyncMock()
+        mock_entity = MagicMock()
+        mock_entity.title = "Test Group"
+        mock_entity.first_name = None
+        mock_entity.last_name = None
+        mock_entity.username = None
+        mock_entity.phone = None
+        mock_entity.id = 123
+        mock_client.get_entity.return_value = mock_entity
+
+        mock_peer = MagicMock()
+
+        result = await get_mention_text(mock_client, mock_peer)
+        self.assertEqual(result, "Test Group")
+
+    async def test_returns_first_name_only(self):
+        mock_client = AsyncMock()
+        mock_entity = MagicMock()
+        mock_entity.title = None
+        mock_entity.first_name = "John"
+        mock_entity.last_name = None
+        mock_entity.username = None
+        mock_entity.phone = None
+        mock_entity.id = 123
+        mock_client.get_entity.return_value = mock_entity
+
+        result = await get_mention_text(mock_client, MagicMock())
+        self.assertEqual(result, "John ")
+
+    async def test_returns_last_name_only(self):
+        mock_client = AsyncMock()
+        mock_entity = MagicMock()
+        mock_entity.title = None
+        mock_entity.first_name = None
+        mock_entity.last_name = "Doe"
+        mock_entity.username = None
+        mock_entity.phone = None
+        mock_entity.id = 123
+        mock_client.get_entity.return_value = mock_entity
+
+        result = await get_mention_text(mock_client, MagicMock())
+        self.assertEqual(result, "Doe")
+
+    async def test_returns_first_and_last_name(self):
+        mock_client = AsyncMock()
+        mock_entity = MagicMock()
+        mock_entity.title = None
+        mock_entity.first_name = "John"
+        mock_entity.last_name = "Doe"
+        mock_entity.username = None
+        mock_entity.phone = None
+        mock_entity.id = 123
+        mock_client.get_entity.return_value = mock_entity
+
+        result = await get_mention_text(mock_client, MagicMock())
+        self.assertEqual(result, "John Doe")
+
+    async def test_returns_username_when_no_name(self):
+        mock_client = AsyncMock()
+        mock_entity = MagicMock()
+        mock_entity.title = None
+        mock_entity.first_name = None
+        mock_entity.last_name = None
+        mock_entity.username = "testuser"
+        mock_entity.phone = None
+        mock_entity.id = 123
+        mock_client.get_entity.return_value = mock_entity
+
+        result = await get_mention_text(mock_client, MagicMock())
+        self.assertEqual(result, "testuser")
+
+    async def test_returns_phone_when_no_name_or_username(self):
+        mock_client = AsyncMock()
+        mock_entity = MagicMock()
+        mock_entity.title = None
+        mock_entity.first_name = None
+        mock_entity.last_name = None
+        mock_entity.username = None
+        mock_entity.phone = "+1234567890"
+        mock_entity.id = 123
+        mock_client.get_entity.return_value = mock_entity
+
+        result = await get_mention_text(mock_client, MagicMock())
+        self.assertEqual(result, "+1234567890")
+
+    async def test_returns_id_as_string_when_no_other_attrs(self):
+        mock_client = AsyncMock()
+        mock_entity = MagicMock()
+        mock_entity.title = None
+        mock_entity.first_name = None
+        mock_entity.last_name = None
+        mock_entity.username = None
+        mock_entity.phone = None
+        mock_entity.id = 42
+        mock_client.get_entity.return_value = mock_entity
+
+        result = await get_mention_text(mock_client, MagicMock())
+        self.assertEqual(result, "42")
+
+    async def test_returns_unknown_on_exception(self):
+        mock_client = AsyncMock()
+        mock_client.get_entity.side_effect = Exception("API error")
+
+        result = await get_mention_text(mock_client, MagicMock())
+        self.assertEqual(result, "Unknown")
+
+    async def test_uses_to_telethon_input_peer_when_available(self):
+        mock_client = AsyncMock()
+        mock_entity = MagicMock()
+        mock_entity.title = "Channel"
+        mock_entity.first_name = None
+        mock_entity.last_name = None
+        mock_entity.username = None
+        mock_entity.phone = None
+        mock_entity.id = 99
+        mock_client.get_entity.return_value = mock_entity
+
+        mock_peer = MagicMock()
+        input_peer = MagicMock()
+        mock_peer.to_telethon_input_peer.return_value = input_peer
+
+        result = await get_mention_text(mock_client, mock_peer)
+
+        mock_peer.to_telethon_input_peer.assert_called_once()
+        mock_client.get_entity.assert_called_once_with(input_peer)
+        self.assertEqual(result, "Channel")
+
+    async def test_uses_peer_directly_when_no_to_telethon_input_peer(self):
+        mock_client = AsyncMock()
+        mock_entity = MagicMock()
+        mock_entity.title = "Direct Peer"
+        mock_entity.first_name = None
+        mock_entity.last_name = None
+        mock_entity.username = None
+        mock_entity.phone = None
+        mock_entity.id = 77
+        mock_client.get_entity.return_value = mock_entity
+
+        mock_peer = MagicMock(spec=[])  # No to_telethon_input_peer
+
+        result = await get_mention_text(mock_client, mock_peer)
+
+        mock_client.get_entity.assert_called_once_with(mock_peer)
+        self.assertEqual(result, "Direct Peer")
 
 
 if __name__ == "__main__":

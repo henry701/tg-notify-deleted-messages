@@ -1,24 +1,23 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from packages.models.root.TelegramPeer import TelegramPeer
+from packages.models.support.PeerType import PeerType
+from packages.telegram_helpers import (
+    build_peer_entity,
+    build_telegram_peer,
+    format_default_message_text,
+    format_default_unknown_message_text,
+    get_mention_text,
+    refresh_client,
+    to_telethon_input_peer,
+)
 from telethon.tl.types import (
     InputPeerChannel,
     InputPeerChat,
     InputPeerSelf,
     InputPeerUser,
 )
-
-from packages.telegram_helpers import (
-    get_mention_text,
-    to_telethon_input_peer,
-    build_telegram_peer,
-    build_peer_entity,
-    refresh_client,
-    format_default_message_text,
-    format_default_unknown_message_text,
-)
-from packages.models.root.TelegramPeer import TelegramPeer
-from packages.models.support.PeerType import PeerType
 
 
 class GetMentionTextTests(unittest.IsolatedAsyncioTestCase):

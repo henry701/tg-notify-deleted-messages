@@ -1,12 +1,11 @@
-# -*- coding: utf-8 -*-
 """Event handlers and message storage orchestration."""
 
 import asyncio
 import logging
 import os
-
+from collections.abc import Awaitable, Callable
 from distutils.util import strtobool
-from typing import Any, Awaitable, Callable, List, Tuple, Union
+from typing import Any
 
 import sqlalchemy
 import sqlalchemy.exc
@@ -15,7 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.selectable import Select
 from telethon import TelegramClient, events
-from telethon.events import MessageDeleted, NewMessage, MessageEdited
+from telethon.events import MessageDeleted, MessageEdited, NewMessage
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
 
 from packages.filtering import raw_should_ignore_message_chat
@@ -41,7 +40,7 @@ async def load_messages_from_deleted_event(
     ignore_gigagroups: bool,
     member_ignore_threshold: int,
     should_notify_outgoing_messages: bool,
-) -> Tuple[List[TelegramMessage], Union[Select, None], List[int], List[int]]:
+) -> tuple[list[TelegramMessage], Select | None, list[int], list[int]]:
     logger.debug(f"Searching for messages in {event.deleted_ids}")
 
     chat = None
@@ -72,7 +71,7 @@ def get_on_message_deleted(
         [TelegramMessage, TelegramClient], Awaitable[Any]
     ],
     notify_unknown_message: Callable[
-        [List[int], MessageDeleted.Event, TelegramClient], Awaitable[Any]
+        [list[int], MessageDeleted.Event, TelegramClient], Awaitable[Any]
     ],
     gather_with_concurrency_func: Callable,
 ):
@@ -126,11 +125,7 @@ def get_on_message_deleted(
         filtered_away_messages_count_str = str(filtered_away_messages_count)
 
         logger.info(
-            "Got {deleted_messages_count} deleted messages. Has matching in DB: {db_messages_count}. Filtered away: {filtered_away_messages_count}".format(
-                deleted_messages_count=deleted_messages_count_str,
-                db_messages_count=db_messages_count_str,
-                filtered_away_messages_count=filtered_away_messages_count_str,
-            )
+            f"Got {deleted_messages_count_str} deleted messages. Has matching in DB: {db_messages_count_str}. Filtered away: {filtered_away_messages_count_str}"
         )
 
         if deleted_messages_count > db_messages_count + filtered_away_messages_count:
@@ -149,16 +144,11 @@ def get_on_message_deleted(
                 )
             except Exception as e:
                 logger.error(
-                    "Error while logging missing deleted message (has {db_messages_count} of {deleted_messages_count}, with {filtered_away_messages_count} filtered away): {e}".format(
-                        deleted_messages_count=deleted_messages_count_str,
-                        db_messages_count=db_messages_count_str,
-                        filtered_away_messages_count=filtered_away_messages_count_str,
-                        e=e,
-                    ),
+                    f"Error while logging missing deleted message (has {db_messages_count_str} of {deleted_messages_count_str}, with {filtered_away_messages_count_str} filtered away): {e}",
                     exc_info=True,
                 )
 
-        awaitables: List[Awaitable[Any]] = []
+        awaitables: list[Awaitable[Any]] = []
         for message in messages:
             awaitables.append(notify_message_deletion(message, client))
         if unloaded_ids and len(unloaded_ids):
@@ -256,11 +246,7 @@ def get_on_message_edited(
         filtered_away_messages_count_str = str(filtered_away_messages_count)
 
         logger.info(
-            "Got {edited_messages_count} edited message. Has matching in DB: {db_messages_count}. Filtered away: {filtered_away_messages_count}".format(
-                edited_messages_count=edited_messages_count_str,
-                db_messages_count=db_messages_count_str,
-                filtered_away_messages_count=filtered_away_messages_count_str,
-            )
+            f"Got {edited_messages_count_str} edited message. Has matching in DB: {db_messages_count_str}. Filtered away: {filtered_away_messages_count_str}"
         )
 
         if edited_messages_count > db_messages_count + filtered_away_messages_count:
@@ -279,16 +265,11 @@ def get_on_message_edited(
                 )
             except Exception as e:
                 logger.error(
-                    "Error while logging missing edited message (has {db_messages_count} of {edited_messages_count}, with {filtered_away_messages_count} filtered away): {e}".format(
-                        edited_messages_count=edited_messages_count_str,
-                        db_messages_count=db_messages_count_str,
-                        filtered_away_messages_count=filtered_away_messages_count_str,
-                        e=e,
-                    ),
+                    f"Error while logging missing edited message (has {db_messages_count_str} of {edited_messages_count_str}, with {filtered_away_messages_count_str} filtered away): {e}",
                     exc_info=True,
                 )
 
-        awaitables: List[Awaitable[Any]] = []
+        awaitables: list[Awaitable[Any]] = []
         for message in messages:
             awaitables.append(notify_message_edit(message, client))
         if unloaded_ids and len(unloaded_ids):
@@ -324,9 +305,7 @@ def get_should_ignore_message_chat(client: TelegramClient):
     member_ignore_threshold = int(os.getenv("MEMBER_IGNORE_THRESHOLD", "0"))
 
     async def should_ignore_message_chat(
-        chat: Union[
-            telethon.types.User, telethon.types.Chat, telethon.types.Channel, None
-        ],
+        chat: telethon.types.User | telethon.types.Chat | telethon.types.Channel | None,
     ) -> bool:
         return await raw_should_ignore_message_chat(
             chat,
@@ -445,7 +424,7 @@ async def add_event_handlers(
         [TelegramMessage, TelegramClient], Awaitable[Any]
     ],
     notify_unknown_message: Callable[
-        [List[int], MessageDeleted.Event, TelegramClient], Awaitable[Any]
+        [list[int], MessageDeleted.Event, TelegramClient], Awaitable[Any]
     ],
     notify_message_edit: Callable[[TelegramMessage, TelegramClient], Awaitable[Any]],
     gather_with_concurrency_func: Callable,

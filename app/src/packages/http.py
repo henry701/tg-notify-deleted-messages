@@ -1,11 +1,9 @@
-# -*- coding: utf-8 -*-
 """HTTP/Flask application setup and route definitions."""
 
 import asyncio
 import concurrent
 import logging
 import os
-from typing import Union
 
 import flask
 import sqlalchemy
@@ -16,17 +14,17 @@ from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
 from tenacity import retry, retry_if_exception_type, retry_if_result, stop_after_attempt
 
-from packages.bot_assistant import BotAssistant
 from packages.background_jobs import preload_messages
-from packages.models.root.TelegramMessage import TelegramMessage
+from packages.bot_assistant import BotAssistant
 from packages.env_helpers import require_env
+from packages.models.root.TelegramMessage import TelegramMessage
 
 logger = logging.getLogger("tgdel-http")
 
 
 def create_app(
-    client: Union[TelegramClient, None],
-    bot: Union[BotAssistant, None],
+    client: TelegramClient | None,
+    bot: BotAssistant | None,
     loop: asyncio.AbstractEventLoop,
     sqlalchemy_session_maker: sessionmaker,
     sync_closer,
@@ -49,7 +47,7 @@ def create_app(
         if bearer_token is None:
             return
         auth_header_value = flask.request.headers.get("Authorization")
-        if auth_header_value != "Bearer {token}".format(token=bearer_token):
+        if auth_header_value != f"Bearer {bearer_token}":
             return flask.Response(status=401)
 
     @flask_app.route("/send_code", methods=["GET"])
@@ -109,7 +107,7 @@ def create_app(
                         preload_inner_future.result()
                     except Exception as e:
                         logger.error(
-                            "Error while preloading after login: {e}".format(e=e),
+                            f"Error while preloading after login: {e}",
                             exc_info=True,
                         )
 
@@ -139,7 +137,7 @@ def create_app(
 
 def add_informative_routes(
     client: TelegramClient,
-    bot: Union[BotAssistant, None],
+    bot: BotAssistant | None,
     flask_app: flask.Flask,
     loop: asyncio.AbstractEventLoop,
     sqlalchemy_session_maker: sessionmaker,
@@ -239,15 +237,13 @@ def add_informative_routes(
             with sqlalchemy_session_maker.begin() as sqlalchemy_session:
                 sqlalchemy_session.execute(select(TelegramMessage).limit(1))
         except Exception as e:
-            return log_and_return_500("Database Error on health query: {e}".format(e=e))
+            return log_and_return_500(f"Database Error on health query: {e}")
         logger.debug("Checking Telegram Client Communication")
         try:
             asyncio.run_coroutine_threadsafe(client.is_user_authorized(), loop).result()
         except Exception as e:
             log_and_return_500(
-                "Telegram Error while checking Telegram Client Communication: {e}".format(
-                    e=e
-                )
+                f"Telegram Error while checking Telegram Client Communication: {e}"
             )
         if bot is not None and bot.client is not None and bot.client.is_connected():
             logger.debug("Checking Telegram Bot Communication")
@@ -257,9 +253,7 @@ def add_informative_routes(
                 ).result()
             except Exception as e:
                 log_and_return_500(
-                    "Telegram Error while checking Telegram Bot Communication: {e}".format(
-                        e=e
-                    )
+                    f"Telegram Error while checking Telegram Bot Communication: {e}"
                 )
         logger.debug("Returning success from health check")
         return flask.Response(status=204)

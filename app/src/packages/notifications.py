@@ -1,6 +1,5 @@
-# -*- coding: utf-8 -*-
-
-from typing import Any, Awaitable, Callable, List
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from sqlalchemy.orm import sessionmaker
 from telethon import TelegramClient
@@ -42,10 +41,10 @@ def get_default_notify_message_deletion() -> Callable[
 
 
 def get_default_notify_unknown_message() -> Callable[
-    [List[int], MessageDeleted.Event, TelegramClient], Awaitable[Any]
+    [list[int], MessageDeleted.Event, TelegramClient], Awaitable[Any]
 ]:
     async def default_notify_unknown_message(
-        message_ids: List[int], event: MessageDeleted.Event, client: TelegramClient
+        message_ids: list[int], event: MessageDeleted.Event, client: TelegramClient
     ):
         await client.send_message(
             entity="me",

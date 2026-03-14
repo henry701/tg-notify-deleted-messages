@@ -1,7 +1,4 @@
-# -*- coding: utf-8 -*-
 """Message loading utilities for fetching messages from the database."""
-
-from typing import List, Tuple, Union
 
 import telethon
 from sqlalchemy.orm.session import Session
@@ -18,12 +15,13 @@ from packages.models.support.PeerType import PeerType
 
 
 async def load_messages_from_db(
-    ids: List[int],
-    peer_entity: Union[
-        telethon.types.User, telethon.types.Chat, telethon.types.Channel, None
-    ],
+    ids: list[int],
+    peer_entity: telethon.types.User
+    | telethon.types.Chat
+    | telethon.types.Channel
+    | None,
     sqlalchemy_session: Session,
-) -> Tuple:
+) -> tuple:
     """
     Load messages from the database matching the given IDs and optional peer entity.
 
@@ -54,7 +52,7 @@ async def load_messages_from_db(
         the_query = the_query.where(
             TelegramMessage.chat_peer.has(TelegramPeer.type == chat_peer_type)
         )
-    db_results: List[TelegramMessage] = list(
+    db_results: list[TelegramMessage] = list(
         sqlalchemy_session.execute(the_query).scalars().all()
     )
     loaded_ids = [int(str(message.id)) for message in db_results]
@@ -63,10 +61,11 @@ async def load_messages_from_db(
 
 
 async def load_messages_by_parameters(
-    ids: List[int],
-    peer_entity: Union[
-        telethon.types.User, telethon.types.Chat, telethon.types.Channel, None
-    ],
+    ids: list[int],
+    peer_entity: telethon.types.User
+    | telethon.types.Chat
+    | telethon.types.Channel
+    | None,
     client: TelegramClient,
     sqlalchemy_session: Session,
     ignore_channels: bool,
@@ -150,8 +149,8 @@ async def filter_loaded_messages(
     member_ignore_threshold: int,
     should_notify_outgoing_messages: bool,
     client: TelegramClient,
-    db_results: List[TelegramMessage],
-) -> List[TelegramMessage]:
+    db_results: list[TelegramMessage],
+) -> list[TelegramMessage]:
     """
     Filter loaded messages based on deletion notification rules.
 

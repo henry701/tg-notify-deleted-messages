@@ -2,6 +2,14 @@ import os
 import unittest
 from unittest.mock import MagicMock, patch
 
+from packages.db_helpers import (
+    create_database,
+    encrypt_database_metadata,
+    get_db_url,
+    should_encrypt_column,
+    should_encrypt_column_even_if_not_allowed_type,
+    should_encrypt_column_traverser,
+)
 from sqlalchemy import (
     BigInteger,
     Column,
@@ -13,15 +21,6 @@ from sqlalchemy import (
     Table,
 )
 from sqlalchemy_utils.types.encrypted.encrypted_type import StringEncryptedType
-
-from packages.db_helpers import (
-    create_database,
-    encrypt_database_metadata,
-    get_db_url,
-    should_encrypt_column,
-    should_encrypt_column_even_if_not_allowed_type,
-    should_encrypt_column_traverser,
-)
 
 
 class DbHelpersTests(unittest.TestCase):

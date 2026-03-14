@@ -1,18 +1,16 @@
-# -*- coding: utf-8 -*-
 """Background job loops for message preloading and cleanup."""
 
 import asyncio
 import contextlib
 import logging
 import os
-
 from datetime import datetime, timedelta, timezone
 from distutils.util import strtobool
 
 import telethon
-from telethon import TelegramClient
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql.expression import delete
+from telethon import TelegramClient
 
 from packages.event_orchestration import (
     get_should_ignore_message_chat,
@@ -57,9 +55,7 @@ async def clean_old_messages_loop(
                 )
                 break
     except Exception as e:
-        logger.critical(
-            "Error on Clean Old Messages Outer Loop Handler! {e}".format(e=e)
-        )
+        logger.critical(f"Error on Clean Old Messages Outer Loop Handler! {e}")
     finally:
         logger.info("Exiting Clean Old Messages Loop")
 
@@ -76,11 +72,7 @@ async def preload_messages(
         return
 
     min_message_date = datetime.now(tz=timezone.utc) - messages_ttl_delta
-    logger.info(
-        "Preloading existing messages from {min_message_date}".format(
-            min_message_date=min_message_date
-        )
-    )
+    logger.info(f"Preloading existing messages from {min_message_date}")
 
     iterated_messages = 0
     preloaded_messages = 0
@@ -98,10 +90,7 @@ async def preload_messages(
             except asyncio.CancelledError:
                 return
             logger.info(
-                "Preloading still in progress. Total so far: {preloaded_messages} preloaded, {iterated_messages} iterated".format(
-                    preloaded_messages=preloaded_messages,
-                    iterated_messages=iterated_messages,
-                )
+                f"Preloading still in progress. Total so far: {preloaded_messages} preloaded, {iterated_messages} iterated"
             )
 
     preload_messages_status_task = asyncio.create_task(preload_messages_status_loop())
@@ -112,17 +101,13 @@ async def preload_messages(
     should_ignore_message_chat = get_should_ignore_message_chat(client)
 
     async def preload_messages_for_dialog(dialog):
-        logger.debug(
-            "Preloading existing messages for dialog={dialog}".format(dialog=dialog.id)
-        )
+        logger.debug(f"Preloading existing messages for dialog={dialog.id}")
 
         peer = dialog.input_entity
         full_peer = await client.get_entity(peer)
 
         if await should_ignore_message_chat(full_peer):
-            logger.debug(
-                "Preloading ignoring filtered dialog={dialog}".format(dialog=dialog.id)
-            )
+            logger.debug(f"Preloading ignoring filtered dialog={dialog.id}")
             return
 
         iterated_messages_this_dialog = 0
@@ -167,10 +152,7 @@ async def preload_messages(
             await asyncio.sleep(0)
 
         logger.debug(
-            "Preloaded {preloaded_messages_this_dialog} existing messages for dialog={dialog}".format(
-                dialog=dialog.id,
-                preloaded_messages_this_dialog=preloaded_messages_this_dialog,
-            )
+            f"Preloaded {preloaded_messages_this_dialog} existing messages for dialog={dialog.id}"
         )
 
     dialog_coros = []
@@ -184,9 +166,7 @@ async def preload_messages(
 
     preload_messages_status_task.cancel()
     logger.info(
-        "Preloading finished! Existing message preloaded count: {preloaded_messages}. Total messages iterated: {iterated_messages}".format(
-            preloaded_messages=preloaded_messages, iterated_messages=iterated_messages
-        )
+        f"Preloading finished! Existing message preloaded count: {preloaded_messages}. Total messages iterated: {iterated_messages}"
     )
 
 

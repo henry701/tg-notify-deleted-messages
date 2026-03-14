@@ -1,24 +1,23 @@
-# -*- coding: utf-8 -*-
-
 import logging
-from typing import Callable, List, Union
+from collections.abc import Callable
+
 from telethon import TelegramClient, hints
 from telethon.errors.rpcerrorlist import AuthKeyDuplicatedError
 from telethon.events.messagedeleted import MessageDeleted
 from telethon.sessions.abstract import Session
+
+from packages.models.root.TelegramMessage import TelegramMessage
 from packages.telegram_helpers import (
     format_default_message_text,
     format_default_unknown_message_text,
 )
-
-from packages.models.root.TelegramMessage import TelegramMessage
 
 
 class BotAssistant:
     def __init__(
         self,
         target_chat: hints.EntityLike,
-        api_id: Union[str, int],
+        api_id: str | int,
         api_hash: str,
         bot_token: str,
         session_maker: Callable[[], Session],
@@ -67,7 +66,7 @@ class BotAssistant:
 
     async def notify_unknown_message(
         self,
-        message_ids: List[int],
+        message_ids: list[int],
         event: MessageDeleted.Event,
         client: TelegramClient,
     ):

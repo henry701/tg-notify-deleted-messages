@@ -3,13 +3,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import telethon.types
 from packages.event_orchestration import (
-    get_should_ignore_message,
-    get_should_ignore_message_chat,
+    add_event_handlers,
     get_message_media_blob,
-    get_store_message,
     get_on_message_deleted,
     get_on_new_message,
-    add_event_handlers,
+    get_should_ignore_message,
+    get_should_ignore_message_chat,
+    get_store_message,
     load_messages_from_deleted_event,
 )
 

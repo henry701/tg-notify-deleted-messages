@@ -1,13 +1,9 @@
-# -*- coding: utf-8 -*-
-
-from sqlalchemy import Column, BigInteger, UnicodeText, LargeBinary, TIMESTAMP, Boolean
+from packages.models.root.TelegramPeer import TelegramPeer
+from sqlalchemy import TIMESTAMP, BigInteger, Boolean, Column, LargeBinary, UnicodeText
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql.schema import ForeignKey
 
-from packages.models.root.TelegramPeer import TelegramPeer
-
-from .. import Base, encrypt_type_searchable, encrypt_type_safer
-
-from sqlalchemy.orm import relationship
+from .. import Base, encrypt_type_safer, encrypt_type_searchable
 
 
 class TelegramMessage(Base):

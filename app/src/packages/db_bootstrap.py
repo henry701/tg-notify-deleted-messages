@@ -1,10 +1,8 @@
-# -*- coding: utf-8 -*-
 """Database engine and session factory bootstrap utilities."""
 
 import json
 import logging
 import os
-from typing import Union
 
 import sqlalchemy
 from sqlalchemy.orm import sessionmaker
@@ -15,7 +13,7 @@ logger = logging.getLogger("tgdel-db-bootstrap")
 
 
 def create_engine(
-    database_url: str, pool: Union[sqlalchemy.pool.Pool, None] = None
+    database_url: str, pool: sqlalchemy.pool.Pool | None = None
 ) -> sqlalchemy.engine.Engine:
     """Create a SQLAlchemy engine from a database URL.
 

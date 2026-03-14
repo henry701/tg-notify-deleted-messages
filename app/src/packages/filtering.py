@@ -1,7 +1,4 @@
-# -*- coding: utf-8 -*-
 """Message filtering logic for determining which messages should be ignored."""
-
-from typing import Union
 
 import telethon
 from telethon import TelegramClient
@@ -10,9 +7,10 @@ from packages.models.root.TelegramMessage import TelegramMessage
 
 
 async def raw_should_ignore_message_chat(
-    peer_entity: Union[
-        telethon.types.User, telethon.types.Chat, telethon.types.Channel, None
-    ],
+    peer_entity: telethon.types.User
+    | telethon.types.Chat
+    | telethon.types.Channel
+    | None,
     client: TelegramClient,
     ignore_channels: bool,
     ignore_groups: bool,
@@ -78,7 +76,7 @@ async def raw_should_ignore_message_chat(
             return True
 
     if member_ignore_threshold and member_ignore_threshold > 0:
-        participants_count: Union[int, None] = None
+        participants_count: int | None = None
 
         if isinstance(peer_entity, telethon.types.Channel):
             input_entity = await client.get_input_entity(peer_entity)
@@ -129,9 +127,9 @@ async def should_ignore_deleted_message(
     """
     from packages.telegram_helpers import build_peer_entity
 
-    chat_peer_entity: Union[
-        telethon.types.User, telethon.types.Chat, telethon.types.Channel, None
-    ] = await build_peer_entity(telegram_message.chat_peer, client)
+    chat_peer_entity: (
+        telethon.types.User | telethon.types.Chat | telethon.types.Channel | None
+    ) = await build_peer_entity(telegram_message.chat_peer, client)
 
     should_ignore_message_chat_result = await raw_should_ignore_message_chat(
         chat_peer_entity,

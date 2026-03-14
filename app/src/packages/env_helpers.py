@@ -1,8 +1,5 @@
-# -*- coding: utf-8 -*-
-
 import logging
 import os
-
 from pathlib import Path
 
 from dotenv import load_dotenv

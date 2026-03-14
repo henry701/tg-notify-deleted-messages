@@ -1,5 +1,6 @@
 import unittest
 
+from packages.models.support.PeerType import PeerType
 from telethon.tl.types import (
     EncryptedChat,
     InputEncryptedChat,
@@ -11,8 +12,6 @@ from telethon.tl.types import (
     PeerChat,
     PeerUser,
 )
-
-from packages.models.support.PeerType import PeerType
 
 
 class PeerTypeTests(unittest.TestCase):

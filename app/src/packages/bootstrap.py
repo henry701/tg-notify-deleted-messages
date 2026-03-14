@@ -1,38 +1,34 @@
-# -*- coding: utf-8 -*-
-
 import asyncio
+import concurrent
 import functools
 import logging
 import os
 import signal
 import threading
-import concurrent
 import time
-from typing import Callable, Union
-
+from collections.abc import Callable
+from distutils.util import strtobool
 
 import telethon
 from alchemysession import AlchemySessionContainer
 from telethon import TelegramClient
 from telethon.errors.rpcerrorlist import AuthKeyDuplicatedError
 
-from distutils.util import strtobool
-
-from packages.bot_assistant import BotAssistant
-from packages.event_orchestration import add_event_handlers
 from packages.background_jobs import (
-    preload_messages,
     clean_old_messages_loop,
     messages_ttl_delta,
+    preload_messages,
 )
+from packages.bot_assistant import BotAssistant
+from packages.event_orchestration import add_event_handlers
+from packages.models.root.TelegramMessage import TelegramMessage
 from packages.notifications import (
     get_base_notify_message_deletion,
-    get_default_notify_message_deletion,
-    get_default_notify_unknown_message,
     get_base_notify_message_edit,
+    get_default_notify_message_deletion,
     get_default_notify_message_edit,
+    get_default_notify_unknown_message,
 )
-from packages.models.root.TelegramMessage import TelegramMessage
 
 logger = logging.getLogger("tgdel-bootstrap")
 
@@ -40,7 +36,7 @@ is_exiting = False
 
 
 def ask_exit(
-    signame: Union[str, None],
+    signame: str | None,
     loop: asyncio.AbstractEventLoop,
     additional: Callable,
 ):
@@ -68,18 +64,10 @@ def ask_exit(
     all_tasks = asyncio.all_tasks(loop)
     tasklen = len(all_tasks)
     if tasklen > 0:
-        logger.warning(
-            "[exit] Cancelling all remaining {tasklen} asyncio tasks!".format(
-                tasklen=tasklen
-            )
-        )
+        logger.warning(f"[exit] Cancelling all remaining {tasklen} asyncio tasks!")
         for task in all_tasks:
             task.cancel()
-        logger.warning(
-            "[exit] Cancelled all remaining {tasklen} asyncio tasks!".format(
-                tasklen=tasklen
-            )
-        )
+        logger.warning(f"[exit] Cancelled all remaining {tasklen} asyncio tasks!")
     logger.info("[exit] Stopping the loop!")
     loop.stop()
     logger.info("[exit] Bye bye! Gracefully exited.")
@@ -245,10 +233,10 @@ async def client_main_loop_job(
 class Closer:
     def __init__(self):
         self.called = False
-        self.stop_event: Union[asyncio.Event, None] = None
-        self.started_event: Union[asyncio.Event, None] = None
-        self.client: Union[TelegramClient, None] = None
-        self.bot: Union[BotAssistant, None] = None
+        self.stop_event: asyncio.Event | None = None
+        self.started_event: asyncio.Event | None = None
+        self.client: TelegramClient | None = None
+        self.bot: BotAssistant | None = None
 
     async def __call__(self):
         close_coros = []
@@ -295,7 +283,7 @@ def worker_function(
         closer.started_event = asyncio.Event()
         loop.run_forever()
     except Exception as e:
-        logger.critical("Error on worker function! {e}".format(e=e), exc_info=True)
+        logger.critical(f"Error on worker function! {e}", exc_info=True)
         sync_closer()
         os._exit(1)
     finally:
@@ -317,11 +305,12 @@ def create_app_and_start_jobs() -> tuple:
 
     add_signal_handlers(loop, closer)
 
+    from sqlalchemy.orm import sessionmaker
+
     from packages.db_bootstrap import create_engine
     from packages.db_helpers import create_database, get_db_url
     from packages.env_helpers import require_env
     from packages.models import Base
-    from sqlalchemy.orm import sessionmaker
 
     database_url = get_db_url()
 
@@ -406,7 +395,7 @@ def create_app_and_start_jobs() -> tuple:
         except Exception as e:
             if closer.stop_event.is_set():
                 return
-            logger.error("Error while running main job: {e}".format(e=e), exc_info=True)
+            logger.error(f"Error while running main job: {e}", exc_info=True)
             sync_closer()
             os._exit(1)
         else:

@@ -1,13 +1,12 @@
-# -*- coding: utf-8 -*-
-
+import logging
 import os
 import re
+
 import sqlalchemy
 import sqlalchemy_utils
-import logging
-from packages.env_helpers import require_env
 
 import packages.models
+from packages.env_helpers import require_env
 
 
 def get_db_url():

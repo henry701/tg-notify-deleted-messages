@@ -1,20 +1,18 @@
-# -*- coding: utf-8 -*-
-
-from typing import List, Union
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql.expression import select
 from telethon.client.telegramclient import TelegramClient
 from telethon.events.messagedeleted import MessageDeleted
 from telethon.tl.types import (
+    InputEncryptedChat,
     InputPeerChannel,
     InputPeerChat,
+    InputPeerSelf,
     InputPeerUser,
     PeerChannel,
     PeerChat,
     PeerUser,
-    InputPeerSelf,
-    InputEncryptedChat,
 )
+
 from packages.models.root.TelegramMessage import TelegramMessage
 from packages.models.root.TelegramPeer import TelegramPeer
 from packages.models.support.PeerType import PeerType
@@ -47,10 +45,10 @@ async def get_mention_text(entity):
 
 
 async def build_telegram_peer(
-    peer: Union[PeerUser, PeerChat, PeerChannel, None],
+    peer: PeerUser | PeerChat | PeerChannel | None,
     client: TelegramClient,
     sqlalchemy_session_maker: sessionmaker,
-) -> Union[TelegramPeer, None]:
+) -> TelegramPeer | None:
     async def find_existing_peer(tele_peer, sqlalchemy_session):
         return sqlalchemy_session.execute(
             select(TelegramPeer)
@@ -78,14 +76,14 @@ async def build_telegram_peer(
 
 def to_telethon_input_peer(
     telegram_peer: TelegramPeer,
-) -> Union[
-    InputPeerUser,
-    InputPeerChannel,
-    InputPeerChat,
-    InputPeerSelf,
-    InputEncryptedChat,
-    None,
-]:
+) -> (
+    InputPeerUser
+    | InputPeerChannel
+    | InputPeerChat
+    | InputPeerSelf
+    | InputEncryptedChat
+    | None
+):
     try:
         peer_type = PeerType(telegram_peer.type)
     except Exception:
@@ -145,7 +143,7 @@ async def format_default_message_text(
 
 async def format_default_unknown_message_text(
     client: TelegramClient,
-    message_ids: List[int],
+    message_ids: list[int],
     event: MessageDeleted.Event,
     tried: bool = False,
 ) -> str:

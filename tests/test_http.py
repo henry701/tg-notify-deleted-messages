@@ -264,8 +264,8 @@ class AuthRouteTests(unittest.TestCase):
     @patch.dict("os.environ", {"PHONE_NUMBER": "123456"})
     @patch("asyncio.run_coroutine_threadsafe")
     def test_auth_success_returns_204(self, mock_run_coro):
-        from packages.http import create_app
         import telethon.types
+        from packages.http import create_app
 
         send_future = MagicMock()
         send_future.result.return_value = MagicMock()

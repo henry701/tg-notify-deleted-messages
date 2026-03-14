@@ -3,13 +3,12 @@ import unittest
 from unittest.mock import patch
 
 import sqlalchemy
-from sqlalchemy.orm import sessionmaker
-
 from packages.db_bootstrap import (
     create_engine,
     create_engine_from_env,
     create_session_factory,
 )
+from sqlalchemy.orm import sessionmaker
 
 
 class CreateEngineTests(unittest.TestCase):

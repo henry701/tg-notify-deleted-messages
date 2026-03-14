@@ -2,9 +2,9 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from packages.message_loading import (
-    load_messages_from_db,
-    load_messages_by_parameters,
     filter_loaded_messages,
+    load_messages_by_parameters,
+    load_messages_from_db,
 )
 
 

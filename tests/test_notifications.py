@@ -3,10 +3,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from packages.notifications import (
     get_base_notify_message_deletion,
-    get_default_notify_message_deletion,
-    get_default_notify_unknown_message,
     get_base_notify_message_edit,
+    get_default_notify_message_deletion,
     get_default_notify_message_edit,
+    get_default_notify_unknown_message,
     get_mention_text,
 )
 

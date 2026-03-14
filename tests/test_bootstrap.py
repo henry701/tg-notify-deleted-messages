@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from packages.bootstrap import (
     Closer,
+    add_signal_handlers,
     ask_exit,
     make_sync_closer,
-    add_signal_handlers,
 )
 
 

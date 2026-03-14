@@ -3,13 +3,12 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 import sqlalchemy
-from sqlalchemy import text
-
 from packages.db_helpers import create_database
 
 # Import model modules so their table definitions are registered on Base.metadata.
 from packages.models.root.TelegramMessage import TelegramMessage  # noqa: F401
 from packages.models.root.TelegramPeer import TelegramPeer  # noqa: F401
+from sqlalchemy import text
 
 
 def build_test_engine(database_url: str) -> sqlalchemy.Engine:

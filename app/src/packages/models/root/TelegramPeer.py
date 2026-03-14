@@ -1,6 +1,4 @@
-# -*- coding: utf-8 -*-
-
-from sqlalchemy import Column, Integer, BigInteger
+from sqlalchemy import BigInteger, Column, Integer
 from sqlalchemy.sql.schema import UniqueConstraint
 
 from .. import Base, encrypt_type_searchable

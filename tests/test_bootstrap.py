@@ -108,6 +108,7 @@ class MakeSyncCloserTests(unittest.TestCase):
     def test_triggers_ask_exit_when_called(self, mock_all_tasks):
         closer = Closer()
         loop = MagicMock()
+        loop.run_until_complete.side_effect = lambda coro: coro.close()
         sync_closer = make_sync_closer(closer, loop)
         with patch("packages.bootstrap.logger"):
             sync_closer()

@@ -4,6 +4,11 @@ from unittest.mock import MagicMock, patch
 from packages.http import add_informative_routes
 
 
+def close_coro_and_return(coro, future):
+    coro.close()
+    return future
+
+
 class AddInformativeRoutesTests(unittest.TestCase):
     def setUp(self):
         from flask import Flask
@@ -162,7 +167,9 @@ class SendCodeRouteTests(unittest.TestCase):
 
         future_mock = MagicMock()
         future_mock.result.return_value = MagicMock()
-        mock_run_coro.return_value = future_mock
+        mock_run_coro.side_effect = lambda coro, loop: close_coro_and_return(
+            coro, future_mock
+        )
 
         client_mock = MagicMock()
         loop_mock = MagicMock()
@@ -184,7 +191,9 @@ class LogoutRouteTests(unittest.TestCase):
 
         future_mock = MagicMock()
         future_mock.result.return_value = None
-        mock_run_coro.return_value = future_mock
+        mock_run_coro.side_effect = lambda coro, loop: close_coro_and_return(
+            coro, future_mock
+        )
 
         client_mock = MagicMock()
         loop_mock = MagicMock()
@@ -224,7 +233,9 @@ class AuthRouteTests(unittest.TestCase):
         sent_code_mock = MagicMock()
         sent_code_mock.phone_code_hash = "test_hash"
         future_mock.result.return_value = sent_code_mock
-        mock_run_coro.return_value = future_mock
+        mock_run_coro.side_effect = lambda coro, loop: close_coro_and_return(
+            coro, future_mock
+        )
 
         client_mock = MagicMock()
         loop_mock = MagicMock()
@@ -247,7 +258,9 @@ class AuthRouteTests(unittest.TestCase):
         sent_code_mock = MagicMock()
         sent_code_mock.phone_code_hash = "test_hash"
         future_mock.result.return_value = sent_code_mock
-        mock_run_coro.return_value = future_mock
+        mock_run_coro.side_effect = lambda coro, loop: close_coro_and_return(
+            coro, future_mock
+        )
 
         client_mock = MagicMock()
         loop_mock = MagicMock()
@@ -278,11 +291,13 @@ class AuthRouteTests(unittest.TestCase):
         preload_future.add_done_callback = MagicMock()
 
         def run_coro_side_effect(coro, loop):
-            if "send_code" in str(coro):
+            coro_str = str(coro)
+            coro.close()
+            if "send_code" in coro_str:
                 return send_future
-            elif "sign_in" in str(coro):
+            elif "sign_in" in coro_str:
                 return sign_in_future
-            elif "preload" in str(coro):
+            elif "preload" in coro_str:
                 return preload_future
             return MagicMock()
 
@@ -317,7 +332,9 @@ class IsBotAuthorizedRouteTests(unittest.TestCase):
 
         future_mock = MagicMock()
         future_mock.result.return_value = True
-        mock_run_coro.return_value = future_mock
+        mock_run_coro.side_effect = lambda coro, loop: close_coro_and_return(
+            coro, future_mock
+        )
 
         add_informative_routes(
             self.client_mock,
@@ -357,7 +374,9 @@ class IsAuthorizedRouteTests(unittest.TestCase):
 
         future_mock = MagicMock()
         future_mock.result.return_value = True
-        mock_run_coro.return_value = future_mock
+        mock_run_coro.side_effect = lambda coro, loop: close_coro_and_return(
+            coro, future_mock
+        )
 
         add_informative_routes(
             client_mock,
@@ -380,7 +399,9 @@ class HealthRouteTests(unittest.TestCase):
 
         future_mock = MagicMock()
         future_mock.result.return_value = True
-        mock_run_coro.return_value = future_mock
+        mock_run_coro.side_effect = lambda coro, loop: close_coro_and_return(
+            coro, future_mock
+        )
 
         client_mock = MagicMock()
         client_mock.is_connected.return_value = True
@@ -475,6 +496,7 @@ class AuthRouteErrorTests(unittest.TestCase):
 
         def run_coro_side_effect(coro, loop):
             coro_str = str(coro)
+            coro.close()
             if "send_code" in coro_str:
                 return send_future
             elif "sign_in" in coro_str:
@@ -509,6 +531,7 @@ class AuthRouteErrorTests(unittest.TestCase):
 
         def run_coro_side_effect(coro, loop):
             coro_str = str(coro)
+            coro.close()
             if "send_code" in coro_str:
                 return send_future
             elif "sign_in" in coro_str:
@@ -542,6 +565,7 @@ class AuthRouteErrorTests(unittest.TestCase):
 
         def run_coro_side_effect(coro, loop):
             coro_str = str(coro)
+            coro.close()
             if "send_code" in coro_str:
                 return send_future
             elif "sign_in" in coro_str:
@@ -571,7 +595,9 @@ class HealthRouteDbErrorTests(unittest.TestCase):
 
         future_mock = MagicMock()
         future_mock.result.return_value = True
-        mock_run_coro.return_value = future_mock
+        mock_run_coro.side_effect = lambda coro, loop: close_coro_and_return(
+            coro, future_mock
+        )
 
         client_mock = MagicMock()
         client_mock.is_connected.return_value = True

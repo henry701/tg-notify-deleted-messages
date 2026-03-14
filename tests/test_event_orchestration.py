@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -136,7 +137,7 @@ class GetMessageMediaBlobTests(unittest.IsolatedAsyncioTestCase):
 
 class AddEventHandlersTests(unittest.IsolatedAsyncioTestCase):
     async def test_adds_new_message_and_deleted_handlers(self):
-        client_mock = AsyncMock()
+        client_mock = MagicMock()
         session_maker_mock = MagicMock()
         notify_del = AsyncMock()
         notify_unknown = AsyncMock()
@@ -292,6 +293,9 @@ class GetOnNewMessageTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GetOnMessageDeletedTests(unittest.IsolatedAsyncioTestCase):
+    async def _await_all(self, _limit, *awaitables):
+        return await asyncio.gather(*awaitables)
+
     @patch.dict(
         "os.environ",
         {
@@ -309,7 +313,7 @@ class GetOnMessageDeletedTests(unittest.IsolatedAsyncioTestCase):
         session_maker_mock = MagicMock()
         notify_del = AsyncMock()
         notify_unknown = AsyncMock()
-        gather_func = AsyncMock()
+        gather_func = AsyncMock(side_effect=self._await_all)
         handler = get_on_message_deleted(
             client_mock,
             session_maker_mock,
@@ -336,7 +340,7 @@ class GetOnMessageDeletedTests(unittest.IsolatedAsyncioTestCase):
         session_maker_mock = MagicMock()
         notify_del = AsyncMock()
         notify_unknown = AsyncMock()
-        gather_func = AsyncMock()
+        gather_func = AsyncMock(side_effect=self._await_all)
         handler = get_on_message_deleted(
             client_mock,
             session_maker_mock,
@@ -374,7 +378,7 @@ class GetOnMessageDeletedTests(unittest.IsolatedAsyncioTestCase):
 
         notify_del = AsyncMock()
         notify_unknown = AsyncMock()
-        gather_func = AsyncMock()
+        gather_func = AsyncMock(side_effect=self._await_all)
 
         mock_message = MagicMock()
         mock_message.id = 1
@@ -423,7 +427,7 @@ class GetOnMessageDeletedTests(unittest.IsolatedAsyncioTestCase):
 
         notify_del = AsyncMock()
         notify_unknown = AsyncMock()
-        gather_func = AsyncMock()
+        gather_func = AsyncMock(side_effect=self._await_all)
 
         with patch(
             "packages.event_orchestration.load_messages_from_deleted_event",
@@ -448,6 +452,9 @@ class GetOnMessageDeletedTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
+    async def _await_all(self, _limit, *awaitables):
+        return await asyncio.gather(*awaitables)
+
     @patch.dict(
         "os.environ",
         {
@@ -464,7 +471,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         client_mock = AsyncMock()
         session_maker_mock = MagicMock()
         notify_edit = AsyncMock()
-        gather_func = AsyncMock()
+        gather_func = AsyncMock(side_effect=self._await_all)
         handler = get_on_message_edited(
             client_mock,
             session_maker_mock,
@@ -496,7 +503,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
 
         notify_edit = AsyncMock()
-        gather_func = AsyncMock()
+        gather_func = AsyncMock(side_effect=self._await_all)
 
         mock_message = MagicMock()
         mock_message.id = 1
@@ -545,7 +552,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
 
         notify_edit = AsyncMock()
-        gather_func = AsyncMock()
+        gather_func = AsyncMock(side_effect=self._await_all)
 
         event_mock = AsyncMock()
         event_mock.message_id = 1

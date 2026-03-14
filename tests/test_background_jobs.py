@@ -12,6 +12,10 @@ from packages.background_jobs import (
 
 
 class CleanOldMessagesLoopTests(unittest.IsolatedAsyncioTestCase):
+    async def _raise_timeout_and_close_waiter(self, awaitable, _timeout):
+        awaitable.close()
+        raise asyncio.TimeoutError
+
     async def test_exits_on_stop_event(self):
         session_maker_mock = MagicMock()
         stop_event = asyncio.Event()
@@ -49,7 +53,7 @@ class CleanOldMessagesLoopTests(unittest.IsolatedAsyncioTestCase):
             )
 
             with patch("asyncio.wait_for", new_callable=AsyncMock) as wait_mock:
-                wait_mock.side_effect = asyncio.TimeoutError
+                wait_mock.side_effect = self._raise_timeout_and_close_waiter
                 stop_event.set()
                 await clean_old_messages_loop(
                     session_maker_mock,
@@ -68,7 +72,7 @@ class CleanOldMessagesLoopTests(unittest.IsolatedAsyncioTestCase):
             session_maker_mock.begin.side_effect = Exception("fatal outer")
 
             with patch("asyncio.wait_for", new_callable=AsyncMock) as wait_mock:
-                wait_mock.side_effect = asyncio.TimeoutError
+                wait_mock.side_effect = self._raise_timeout_and_close_waiter
                 await clean_old_messages_loop(
                     session_maker_mock,
                     seconds_interval=0,

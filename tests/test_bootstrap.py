@@ -57,6 +57,44 @@ class CloserTests(unittest.IsolatedAsyncioTestCase):
         await closer()
         closer.bot.__aexit__.assert_called_once()
 
+    async def test_handles_none_stop_event(self):
+        closer = Closer()
+        closer.stop_event = None
+        closer.client = None
+        closer.bot = None
+        await closer()
+        self.assertTrue(closer.called)
+
+    async def test_handles_none_client(self):
+        closer = Closer()
+        closer.stop_event = asyncio.Event()
+        closer.client = None
+        closer.bot = None
+        await closer()
+        self.assertTrue(closer.stop_event.is_set())
+        self.assertTrue(closer.called)
+
+    async def test_handles_bot_exists(self):
+        closer = Closer()
+        closer.stop_event = asyncio.Event()
+        closer.client = None
+        bot_mock = AsyncMock()
+        bot_mock.__aexit__ = AsyncMock()
+        closer.bot = bot_mock
+        await closer()
+        bot_mock.__aexit__.assert_called_once_with(None, None, None)
+
+    async def test_handles_exception_in_gather(self):
+        closer = Closer()
+        closer.stop_event = asyncio.Event()
+        closer.client = None
+        bot_mock = AsyncMock()
+        bot_mock.__aexit__ = AsyncMock(side_effect=RuntimeError("test error"))
+        closer.bot = bot_mock
+        with patch("packages.bootstrap.os._exit") as mock_exit:
+            await closer()
+            mock_exit.assert_called_once_with(1)
+
 
 class MakeSyncCloserTests(unittest.TestCase):
     def test_returns_callable(self):
@@ -64,6 +102,17 @@ class MakeSyncCloserTests(unittest.TestCase):
         loop = MagicMock()
         sync_closer = make_sync_closer(closer, loop)
         self.assertTrue(callable(sync_closer))
+
+    @patch("packages.bootstrap.is_exiting", False)
+    @patch("packages.bootstrap.asyncio.all_tasks", return_value=set())
+    def test_triggers_ask_exit_when_called(self, mock_all_tasks):
+        closer = Closer()
+        loop = MagicMock()
+        sync_closer = make_sync_closer(closer, loop)
+        with patch("packages.bootstrap.logger"):
+            sync_closer()
+        loop.run_until_complete.assert_called_once()
+        loop.stop.assert_called_once()
 
 
 class AddSignalHandlersTests(unittest.TestCase):
@@ -137,6 +186,52 @@ class AskExitTests(unittest.TestCase):
         ask_exit(None, loop, closer_coro)
         loop.run_until_complete.assert_called_once_with(closer_coro())
 
+    @patch("packages.bootstrap.is_exiting", False)
+    @patch("packages.bootstrap.asyncio.all_tasks", return_value=set())
+    def test_skips_additional_when_none(self, mock_all_tasks):
+        loop = MagicMock()
+
+        ask_exit(None, loop, None)
+        loop.run_until_complete.assert_not_called()
+        loop.stop.assert_called_once()
+
+    @patch("packages.bootstrap.is_exiting", False)
+    @patch("packages.bootstrap.asyncio.all_tasks", return_value=set())
+    def test_runtimeerror_event_loop_stopped_ignored(self, mock_all_tasks):
+        loop = MagicMock()
+        loop.run_until_complete.side_effect = RuntimeError(
+            "Event loop stopped before Future completed"
+        )
+        closer_coro = MagicMock()
+
+        with patch("packages.bootstrap.logger") as mock_logger:
+            ask_exit(None, loop, closer_coro)
+            mock_logger.error.assert_not_called()
+            loop.stop.assert_called_once()
+
+    @patch("packages.bootstrap.is_exiting", False)
+    @patch("packages.bootstrap.asyncio.all_tasks", return_value=set())
+    def test_runtimeerror_other_logged(self, mock_all_tasks):
+        loop = MagicMock()
+        loop.run_until_complete.side_effect = RuntimeError("some other error")
+        closer_coro = MagicMock()
+
+        with patch("packages.bootstrap.logger") as mock_logger:
+            ask_exit(None, loop, closer_coro)
+            mock_logger.error.assert_called_once()
+
+    @patch("packages.bootstrap.is_exiting", False)
+    @patch("packages.bootstrap.asyncio.all_tasks", return_value=set())
+    def test_successful_additional_runs_else_branch(self, mock_all_tasks):
+        loop = MagicMock()
+        closer_coro = MagicMock()
+
+        with patch("packages.bootstrap.logger") as mock_logger:
+            ask_exit(None, loop, closer_coro)
+            mock_logger.info.assert_any_call(
+                "[exit] Successfully ran user-provided cleanupper"
+            )
+
 
 class ConfigureBotTests(unittest.IsolatedAsyncioTestCase):
     @patch.dict("os.environ", {}, clear=False)
@@ -154,6 +249,19 @@ class ConfigureBotTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(notify_del)
             self.assertIsNone(notify_unknown)
             self.assertIsNone(bot)
+
+    @patch("packages.bootstrap.os._exit", side_effect=SystemExit)
+    @patch.dict(
+        "os.environ",
+        {"TELEGRAM_BOT_TOKEN": "test_token", "TARGET_CHAT_IS_ID": "0"},
+    )
+    async def test_exits_when_target_chat_is_me(self, mock_exit):
+        from packages.bootstrap import configure_bot
+
+        container_mock = MagicMock()
+        with self.assertRaises(SystemExit):
+            await configure_bot(container_mock, "api_id", "api_hash", "me", "session1")
+        mock_exit.assert_called_once_with(1)
 
 
 class MakeClientTests(unittest.IsolatedAsyncioTestCase):
@@ -240,6 +348,67 @@ class ClientMainLoopJobTests(unittest.IsolatedAsyncioTestCase):
             )
 
             self.assertTrue(started_event.is_set())
+
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+            "NOTIFY_OUTGOING_MESSAGES": "True",
+            "DELETED_MESSAGES_NOTIFICATION_CONCURRENCY": "1",
+            "EDITED_MESSAGES_NOTIFICATION_CONCURRENCY": "1",
+        },
+    )
+    async def test_uses_default_notify_when_none(self):
+        from packages.bootstrap import client_main_loop_job
+
+        stop_event = asyncio.Event()
+        started_event = asyncio.Event()
+        session_maker_mock = MagicMock()
+
+        session_mock = MagicMock()
+        session_mock.execute.return_value.scalar.return_value = None
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        client_mock = AsyncMock()
+        client_mock.get_entity = AsyncMock(return_value=MagicMock())
+        gather_mock = AsyncMock(return_value=[])
+
+        with (
+            patch(
+                "packages.bootstrap.add_event_handlers", new_callable=AsyncMock
+            ) as add_handlers,
+            patch(
+                "packages.bootstrap.preload_messages", new_callable=AsyncMock
+            ) as preload,
+        ):
+            add_handlers.return_value = None
+            preload.return_value = None
+            stop_event.set()
+
+            await client_main_loop_job(
+                stop_event,
+                started_event,
+                session_maker_mock,
+                None,
+                None,
+                None,
+                client_mock,
+                gather_mock,
+            )
+
+            self.assertTrue(started_event.is_set())
+            add_handlers.assert_called_once()
+            args = add_handlers.call_args
+            self.assertIsNotNone(args[0][2])
+            self.assertIsNotNone(args[0][3])
+            self.assertIsNotNone(args[0][4])
 
 
 class WorkerFunctionTests(unittest.TestCase):

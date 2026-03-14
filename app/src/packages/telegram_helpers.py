@@ -127,7 +127,9 @@ async def format_default_message_text(
         if tried:
             raise
         await refresh_client(client)
-        return format_default_message_text(client=client, message=message, tried=True)
+        return await format_default_message_text(
+            client=client, message=message, tried=True
+        )
     mention_username = await get_mention_text(user)
     mention_chatname = await get_mention_text(chat)
     text = "**Deleted message** from: [{username}](tg://user?id={userid}) on chat [{chatname}](tg://chat?id={chatid})\n".format(

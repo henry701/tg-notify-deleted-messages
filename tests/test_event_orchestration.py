@@ -6,10 +6,12 @@ from packages.event_orchestration import (
     add_event_handlers,
     get_message_media_blob,
     get_on_message_deleted,
+    get_on_message_edited,
     get_on_new_message,
     get_should_ignore_message,
     get_should_ignore_message_chat,
     get_store_message,
+    get_store_message_if_not_exists,
     load_messages_from_deleted_event,
 )
 
@@ -443,6 +445,310 @@ class GetOnMessageDeletedTests(unittest.IsolatedAsyncioTestCase):
             notify_unknown.assert_called_once()
             args = notify_unknown.call_args[0]
             self.assertEqual(args[0], [10, 20])
+
+
+class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+            "NOTIFY_OUTGOING_MESSAGES": "True",
+            "EDITED_MESSAGES_NOTIFICATION_CONCURRENCY": "1",
+        },
+    )
+    async def test_returns_callable(self):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+        notify_edit = AsyncMock()
+        gather_func = AsyncMock()
+        handler = get_on_message_edited(
+            client_mock,
+            session_maker_mock,
+            notify_edit,
+            gather_func,
+        )
+        self.assertTrue(callable(handler))
+
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+            "NOTIFY_OUTGOING_MESSAGES": "True",
+            "EDITED_MESSAGES_NOTIFICATION_CONCURRENCY": "1",
+        },
+    )
+    async def test_notifies_on_edited_message_found_in_db(self):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        notify_edit = AsyncMock()
+        gather_func = AsyncMock()
+
+        mock_message = MagicMock()
+        mock_message.id = 1
+
+        event_mock = AsyncMock()
+        event_mock.message_id = 1
+        event_mock.get_input_chat = AsyncMock(return_value=None)
+
+        with patch(
+            "packages.event_orchestration.load_messages_by_parameters",
+            new_callable=AsyncMock,
+        ) as load_mock:
+            load_mock.return_value = ([mock_message], MagicMock(), [], [])
+
+            handler = get_on_message_edited(
+                client_mock,
+                session_maker_mock,
+                notify_edit,
+                gather_func,
+            )
+            await handler(event_mock)
+
+            gather_func.assert_called_once()
+            notify_edit.assert_called_once_with(mock_message, client_mock)
+
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+            "NOTIFY_OUTGOING_MESSAGES": "True",
+            "EDITED_MESSAGES_NOTIFICATION_CONCURRENCY": "1",
+        },
+    )
+    async def test_handles_unloaded_ids_present(self):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        notify_edit = AsyncMock()
+        gather_func = AsyncMock()
+
+        event_mock = AsyncMock()
+        event_mock.message_id = 1
+        event_mock.get_input_chat = AsyncMock(return_value=None)
+
+        with patch(
+            "packages.event_orchestration.load_messages_by_parameters",
+            new_callable=AsyncMock,
+        ) as load_mock:
+            load_mock.return_value = ([], MagicMock(), [10, 20], [])
+
+            handler = get_on_message_edited(
+                client_mock,
+                session_maker_mock,
+                notify_edit,
+                gather_func,
+            )
+            await handler(event_mock)
+
+            notify_edit.assert_not_called()
+            gather_func.assert_not_called()
+
+
+class GetMessageMediaBlobThresholdTests(unittest.IsolatedAsyncioTestCase):
+    @patch("packages.event_orchestration.file_size_threshold", 1000)
+    async def test_returns_none_when_file_size_exceeds_threshold(self):
+        message_mock = MagicMock()
+        message_mock.media = True
+        message_mock.file = MagicMock()
+        message_mock.file.size = 2000
+        result = await get_message_media_blob(message_mock)
+        self.assertIsNone(result)
+
+    @patch("packages.event_orchestration.file_size_threshold", 0)
+    async def test_downloads_when_no_threshold(self):
+        message_mock = AsyncMock()
+        message_mock.media = True
+        message_mock.file = MagicMock()
+        message_mock.file.size = 2000
+        message_mock.download_media = AsyncMock(return_value=b"data")
+        result = await get_message_media_blob(message_mock)
+        self.assertEqual(result, b"data")
+
+
+class GetStoreMessageBranchTests(unittest.IsolatedAsyncioTestCase):
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+        },
+    )
+    async def test_creates_new_message_when_not_existing(self):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+
+        session_mock = MagicMock()
+        query_mock = MagicMock()
+        query_mock.filter.return_value.first.return_value = None
+        session_mock.query.return_value = query_mock
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        store_fn = get_store_message(session_maker_mock, client_mock)
+
+        message_mock = AsyncMock()
+        message_mock.id = 1
+        message_mock.message = "test"
+        message_mock.from_id = None
+        message_mock.peer_id = MagicMock()
+        message_mock.media = None
+        message_mock.date = None
+
+        user_mock = MagicMock()
+        user_mock.id = 123
+        message_mock.get_chat = AsyncMock(return_value=user_mock)
+
+        with (
+            patch(
+                "packages.event_orchestration.build_telegram_peer",
+                new_callable=AsyncMock,
+            ) as build_peer,
+            patch(
+                "packages.event_orchestration.get_message_media_blob",
+                new_callable=AsyncMock,
+            ) as get_blob,
+        ):
+            build_peer.return_value = None
+            get_blob.return_value = None
+            result = await store_fn(message_mock)
+            self.assertTrue(result)
+            session_mock.merge.assert_called_once()
+
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+        },
+    )
+    async def test_updates_existing_message(self):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+
+        existing_message = MagicMock()
+        existing_message.id = 1
+        existing_message.text = "old"
+        existing_message.media = None
+        existing_message.timestamp = None
+        existing_message.edit_date = None
+
+        session_mock = MagicMock()
+        query_mock = MagicMock()
+        query_mock.filter.return_value.first.return_value = existing_message
+        session_mock.query.return_value = query_mock
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        store_fn = get_store_message(session_maker_mock, client_mock)
+
+        message_mock = AsyncMock()
+        message_mock.id = 1
+        message_mock.message = "updated text"
+        message_mock.from_id = None
+        message_mock.peer_id = MagicMock()
+        message_mock.media = None
+        message_mock.date = MagicMock()
+
+        user_mock = MagicMock()
+        user_mock.id = 123
+        message_mock.get_chat = AsyncMock(return_value=user_mock)
+
+        with (
+            patch(
+                "packages.event_orchestration.build_telegram_peer",
+                new_callable=AsyncMock,
+            ) as build_peer,
+            patch(
+                "packages.event_orchestration.get_message_media_blob",
+                new_callable=AsyncMock,
+            ) as get_blob,
+        ):
+            build_peer.return_value = None
+            get_blob.return_value = None
+            result = await store_fn(message_mock)
+            self.assertTrue(result)
+            self.assertEqual(existing_message.text, "updated text")
+            session_mock.merge.assert_called_once_with(existing_message)
+
+
+class GetStoreMessageIfNotExistsTests(unittest.IsolatedAsyncioTestCase):
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+        },
+    )
+    async def test_returns_false_when_message_exists(self):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        store_fn = get_store_message_if_not_exists(client_mock, session_maker_mock)
+
+        message_mock = AsyncMock()
+        message_mock.id = 1
+        message_mock.message = "test"
+        message_mock.from_id = None
+        message_mock.peer_id = MagicMock()
+        message_mock.media = None
+        message_mock.date = None
+
+        user_mock = MagicMock()
+        user_mock.id = 123
+        message_mock.get_chat = AsyncMock(return_value=user_mock)
+
+        existing_msg = MagicMock()
+        with patch(
+            "packages.event_orchestration.load_messages_from_db",
+            new_callable=AsyncMock,
+        ) as load_mock:
+            load_mock.return_value = (MagicMock(), [existing_msg], [])
+            result = await store_fn(message_mock)
+            self.assertFalse(result)
 
 
 if __name__ == "__main__":

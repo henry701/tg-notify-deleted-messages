@@ -458,5 +458,170 @@ class HealthRouteTests(unittest.TestCase):
             self.assertEqual(response.status_code, 500)
 
 
+class AuthRouteErrorTests(unittest.TestCase):
+    @patch.dict("os.environ", {"PHONE_NUMBER": "123456"})
+    @patch("asyncio.run_coroutine_threadsafe")
+    def test_auth_key_unregistered_returns_401(self, mock_run_coro):
+        import telethon.errors.rpcerrorlist
+        from packages.http import create_app
+
+        send_future = MagicMock()
+        send_future.result.return_value = MagicMock()
+
+        sign_in_future = MagicMock()
+        sign_in_future.result.side_effect = (
+            telethon.errors.rpcerrorlist.AuthKeyUnregisteredError(request=None)
+        )
+
+        def run_coro_side_effect(coro, loop):
+            coro_str = str(coro)
+            if "send_code" in coro_str:
+                return send_future
+            elif "sign_in" in coro_str:
+                return sign_in_future
+            return MagicMock()
+
+        mock_run_coro.side_effect = run_coro_side_effect
+
+        client_mock = MagicMock()
+        loop_mock = MagicMock()
+        session_maker_mock = MagicMock()
+        sync_closer = MagicMock()
+        flask_app = create_app(
+            client_mock, None, loop_mock, session_maker_mock, sync_closer
+        )
+        with flask_app.test_client() as client:
+            client.get("/send_code")
+            response = client.get("/auth?code=12345")
+            self.assertEqual(response.status_code, 401)
+
+    @patch.dict("os.environ", {"PHONE_NUMBER": "123456"})
+    @patch("asyncio.run_coroutine_threadsafe")
+    def test_session_password_needed_returns_401(self, mock_run_coro):
+        from telethon.errors import SessionPasswordNeededError
+        from packages.http import create_app
+
+        send_future = MagicMock()
+        send_future.result.return_value = MagicMock()
+
+        sign_in_future = MagicMock()
+        sign_in_future.result.side_effect = SessionPasswordNeededError(request=None)
+
+        def run_coro_side_effect(coro, loop):
+            coro_str = str(coro)
+            if "send_code" in coro_str:
+                return send_future
+            elif "sign_in" in coro_str:
+                return sign_in_future
+            return MagicMock()
+
+        mock_run_coro.side_effect = run_coro_side_effect
+
+        client_mock = MagicMock()
+        loop_mock = MagicMock()
+        session_maker_mock = MagicMock()
+        sync_closer = MagicMock()
+        flask_app = create_app(
+            client_mock, None, loop_mock, session_maker_mock, sync_closer
+        )
+        with flask_app.test_client() as client:
+            client.get("/send_code")
+            response = client.get("/auth?code=12345")
+            self.assertEqual(response.status_code, 401)
+
+    @patch.dict("os.environ", {"PHONE_NUMBER": "123456"})
+    @patch("asyncio.run_coroutine_threadsafe")
+    def test_auth_unknown_signin_result_returns_500(self, mock_run_coro):
+        from packages.http import create_app
+
+        send_future = MagicMock()
+        send_future.result.return_value = MagicMock()
+
+        sign_in_future = MagicMock()
+        sign_in_future.result.return_value = "unknown_result"
+
+        def run_coro_side_effect(coro, loop):
+            coro_str = str(coro)
+            if "send_code" in coro_str:
+                return send_future
+            elif "sign_in" in coro_str:
+                return sign_in_future
+            return MagicMock()
+
+        mock_run_coro.side_effect = run_coro_side_effect
+
+        client_mock = MagicMock()
+        loop_mock = MagicMock()
+        session_maker_mock = MagicMock()
+        sync_closer = MagicMock()
+        flask_app = create_app(
+            client_mock, None, loop_mock, session_maker_mock, sync_closer
+        )
+        with flask_app.test_client() as client:
+            client.get("/send_code")
+            response = client.get("/auth?code=12345")
+            self.assertEqual(response.status_code, 500)
+
+
+class HealthRouteDbErrorTests(unittest.TestCase):
+    @patch.dict("os.environ", {"PHONE_NUMBER": "123456"})
+    @patch("asyncio.run_coroutine_threadsafe")
+    def test_health_fails_when_db_query_fails(self, mock_run_coro):
+        from packages.http import create_app
+
+        future_mock = MagicMock()
+        future_mock.result.return_value = True
+        mock_run_coro.return_value = future_mock
+
+        client_mock = MagicMock()
+        client_mock.is_connected.return_value = True
+        loop_mock = MagicMock()
+        loop_mock.is_running.return_value = True
+
+        session_maker_mock = MagicMock()
+        session_mock = MagicMock()
+        session_mock.execute.side_effect = Exception("DB connection lost")
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        sync_closer = MagicMock()
+        flask_app = create_app(
+            client_mock, None, loop_mock, session_maker_mock, sync_closer
+        )
+        with flask_app.test_client() as client:
+            response = client.get("/health")
+            self.assertEqual(response.status_code, 500)
+
+
+class SaveSessionsWithBotRouteTests(unittest.TestCase):
+    def setUp(self):
+        from flask import Flask
+
+        self.app = Flask(__name__)
+        self.client_mock = MagicMock()
+        self.loop_mock = MagicMock()
+        self.session_maker_mock = MagicMock()
+
+    def test_save_sessions_with_bot(self):
+        self.client_mock.session = MagicMock()
+        bot_mock = MagicMock()
+        bot_mock.client = MagicMock()
+        bot_mock.client.session = MagicMock()
+        add_informative_routes(
+            self.client_mock,
+            bot_mock,
+            self.app,
+            self.loop_mock,
+            self.session_maker_mock,
+        )
+        with self.app.test_client() as client:
+            response = client.get("/save_sessions")
+            self.assertEqual(response.status_code, 204)
+            self.client_mock.session.save.assert_called_once()
+            bot_mock.client.session.save.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -233,6 +233,102 @@ class BuildTelegramPeerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
 
 
+class GetMentionTextEdgeCaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_returns_username_when_entity_has_username(self):
+        entity = MagicMock()
+        entity.first_name = ""
+        entity.last_name = ""
+        entity.title = None
+        entity.username = "johndoe"
+        entity.phone = None
+        result = await get_mention_text(entity)
+        self.assertEqual(result, "johndoe")
+
+    async def test_returns_phone_when_only_phone(self):
+        entity = MagicMock()
+        entity.first_name = ""
+        entity.last_name = ""
+        entity.title = None
+        entity.username = None
+        entity.phone = "+1234567890"
+        entity.id = None
+        entity.chat_id = None
+        result = await get_mention_text(entity)
+        self.assertEqual(result, "+1234567890")
+
+    async def test_returns_first_name_with_trailing_space(self):
+        entity = MagicMock()
+        entity.first_name = "Alice"
+        entity.last_name = ""
+        entity.title = None
+        result = await get_mention_text(entity)
+        self.assertEqual(result, "Alice ")
+
+
+class FormatDefaultMessageTextRetryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_retries_on_first_valueerror_then_succeeds(self):
+        from packages.models.root.TelegramMessage import TelegramMessage
+        from packages.models.root.TelegramPeer import TelegramPeer
+        from packages.models.support.PeerType import PeerType
+
+        client = AsyncMock()
+
+        user_entity = MagicMock()
+        user_entity.id = 100
+        user_entity.first_name = "John"
+        user_entity.last_name = None
+        user_entity.title = None
+        user_entity.username = None
+        user_entity.phone = None
+        user_entity.chat_id = None
+
+        chat_entity = MagicMock()
+        chat_entity.id = 200
+        chat_entity.title = "Retry Chat"
+        chat_entity.first_name = None
+        chat_entity.last_name = None
+        chat_entity.username = None
+        chat_entity.phone = None
+        chat_entity.chat_id = None
+
+        call_count = 0
+
+        async def get_entity_side_effect(entity):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ValueError("Entity not found")
+            if call_count == 2:
+                return user_entity
+            return chat_entity
+
+        client.get_entity = get_entity_side_effect
+
+        from_peer = TelegramPeer(id=1, peer_id=100, access_hash=1, type=PeerType.USER)
+        chat_peer = TelegramPeer(id=2, peer_id=200, access_hash=2, type=PeerType.CHAT)
+
+        message = TelegramMessage(
+            id=1,
+            from_peer=from_peer,
+            chat_peer=chat_peer,
+            text="Hello",
+            media=None,
+            timestamp=None,
+        )
+
+        with patch(
+            "packages.telegram_helpers.to_telethon_input_peer", return_value=MagicMock()
+        ):
+            with patch(
+                "packages.telegram_helpers.refresh_client", new_callable=AsyncMock
+            ):
+                result = await format_default_message_text(client, message)
+
+        self.assertIn("John", result)
+        self.assertIn("Retry Chat", result)
+        self.assertIn("Hello", result)
+
+
 class FormatDefaultMessageTextTests(unittest.IsolatedAsyncioTestCase):
     async def test_formats_message_with_user_and_chat(self):
         from packages.models.root.TelegramMessage import TelegramMessage

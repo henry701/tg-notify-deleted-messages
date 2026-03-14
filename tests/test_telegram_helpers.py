@@ -327,6 +327,35 @@ class FormatDefaultMessageTextTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Deleted message", result)
         self.assertNotIn("**Message Text:**", result)
 
+    async def test_raises_on_second_valueerror(self):
+        from packages.models.root.TelegramMessage import TelegramMessage
+        from packages.models.root.TelegramPeer import TelegramPeer
+        from packages.models.support.PeerType import PeerType
+
+        client = AsyncMock()
+        client.get_entity = AsyncMock(side_effect=ValueError("Still not found"))
+
+        from_peer = TelegramPeer(id=1, peer_id=100, access_hash=1, type=PeerType.USER)
+        chat_peer = TelegramPeer(id=2, peer_id=200, access_hash=2, type=PeerType.CHAT)
+
+        message = TelegramMessage(
+            id=1,
+            from_peer=from_peer,
+            chat_peer=chat_peer,
+            text="test",
+            media=None,
+            timestamp=None,
+        )
+
+        with patch(
+            "packages.telegram_helpers.to_telethon_input_peer", return_value=MagicMock()
+        ):
+            with patch(
+                "packages.telegram_helpers.refresh_client", new_callable=AsyncMock
+            ):
+                with self.assertRaises(ValueError):
+                    await format_default_message_text(client, message, tried=True)
+
 
 class FormatDefaultUnknownMessageTextTests(unittest.IsolatedAsyncioTestCase):
     async def test_formats_unknown_deleted_messages(self):
@@ -366,6 +395,54 @@ class FormatDefaultUnknownMessageTextTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("Anonymous", result)
         self.assertIn("1 total", result)
+
+    async def test_retries_on_valueerror_then_succeeds(self):
+        client = AsyncMock()
+        chat_entity = MagicMock()
+        chat_entity.id = 300
+        chat_entity.title = "Retry Chat"
+        chat_entity.first_name = None
+        chat_entity.last_name = None
+        chat_entity.username = None
+        chat_entity.phone = None
+        chat_entity.chat_id = None
+
+        mock_input = MagicMock()
+        event_mock = AsyncMock()
+        event_mock.get_input_chat = AsyncMock(return_value=mock_input)
+
+        call_count = 0
+
+        async def get_entity_side_effect(entity):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ValueError("Entity not found")
+            return chat_entity
+
+        client.get_entity = get_entity_side_effect
+
+        with patch("packages.telegram_helpers.refresh_client", new_callable=AsyncMock):
+            result = await format_default_unknown_message_text(
+                client, [10, 20], event_mock
+            )
+
+        self.assertIn("Retry Chat", result)
+        self.assertIn("2 total", result)
+
+    async def test_raises_on_second_valueerror(self):
+        client = AsyncMock()
+        mock_input = MagicMock()
+        event_mock = AsyncMock()
+        event_mock.get_input_chat = AsyncMock(return_value=mock_input)
+
+        client.get_entity = AsyncMock(side_effect=ValueError("Still not found"))
+
+        with patch("packages.telegram_helpers.refresh_client", new_callable=AsyncMock):
+            with self.assertRaises(ValueError):
+                await format_default_unknown_message_text(
+                    client, [10], event_mock, tried=True
+                )
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from packages.bot_assistant import BotAssistant
+from telethon.errors.rpcerrorlist import AuthKeyDuplicatedError
 
 
 class BotAssistantInitTests(unittest.TestCase):
@@ -103,6 +104,37 @@ class BotAssistantEnterExitTests(unittest.IsolatedAsyncioTestCase):
         bot.client = None
         with self.assertRaises(RuntimeError):
             await bot.__aexit__(None, None, None)
+
+    async def test_aenter_retries_on_auth_key_duplicated(self):
+        first_session = MagicMock()
+        second_session = MagicMock()
+        sessions = [first_session, second_session]
+        session_iter = iter(sessions)
+
+        def session_maker():
+            return next(session_iter)
+
+        bot = BotAssistant("me", 123, "hash", "token", session_maker)
+
+        with patch("packages.bot_assistant.TelegramClient") as client_cls:
+            first_client = AsyncMock()
+            first_client.connect = AsyncMock()
+            first_client.sign_in = AsyncMock(
+                side_effect=AuthKeyDuplicatedError(request=None)
+            )
+
+            second_client = AsyncMock()
+            second_client.connect = AsyncMock()
+            second_client.sign_in = AsyncMock()
+
+            client_cls.side_effect = [first_client, second_client]
+
+            await bot.__aenter__()
+
+            first_session.delete.assert_called_once()
+            self.assertIs(bot.client, second_client)
+            second_client.connect.assert_called_once()
+            second_client.sign_in.assert_called_once_with(bot_token="token")
 
 
 if __name__ == "__main__":

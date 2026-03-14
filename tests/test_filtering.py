@@ -2,7 +2,10 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import telethon.types
-from packages.filtering import raw_should_ignore_message_chat
+from packages.filtering import (
+    raw_should_ignore_message_chat,
+    should_ignore_deleted_message,
+)
 
 
 class FilteringTests(unittest.IsolatedAsyncioTestCase):
@@ -189,6 +192,104 @@ class FilteringTests(unittest.IsolatedAsyncioTestCase):
                     100,
                 )
                 self.assertFalse(result)
+
+
+class ShouldIgnoreDeletedMessageTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.client_mock = AsyncMock()
+
+    @patch("packages.telegram_helpers.build_peer_entity")
+    async def test_returns_true_when_chat_ignored(self, mock_build_peer_entity):
+        channel_mock = MagicMock(spec=telethon.types.Channel)
+        channel_mock.broadcast = True
+        mock_build_peer_entity.return_value = channel_mock
+
+        message = MagicMock()
+        message.chat_peer = MagicMock()
+        message.from_peer = MagicMock()
+
+        result = await should_ignore_deleted_message(
+            message,
+            self.client_mock,
+            ignore_channels=True,
+            ignore_groups=False,
+            ignore_megagroups=False,
+            ignore_gigagroups=False,
+            member_ignore_threshold=0,
+            should_notify_outgoing_messages=False,
+        )
+        self.assertTrue(result)
+
+    @patch("packages.telegram_helpers.build_peer_entity")
+    async def test_returns_false_when_chat_not_ignored(self, mock_build_peer_entity):
+        user_mock = MagicMock(spec=telethon.types.User)
+        mock_build_peer_entity.return_value = user_mock
+
+        message = MagicMock()
+        message.chat_peer = MagicMock()
+        message.from_peer = MagicMock()
+
+        result = await should_ignore_deleted_message(
+            message,
+            self.client_mock,
+            ignore_channels=False,
+            ignore_groups=False,
+            ignore_megagroups=False,
+            ignore_gigagroups=False,
+            member_ignore_threshold=0,
+            should_notify_outgoing_messages=False,
+        )
+        self.assertFalse(result)
+
+    @patch("packages.telegram_helpers.build_peer_entity")
+    async def test_returns_true_for_outgoing_message_when_notify_disabled(
+        self, mock_build_peer_entity
+    ):
+        user_mock = MagicMock(spec=telethon.types.User)
+        my_peer_entity = MagicMock()
+        mock_build_peer_entity.return_value = user_mock
+        self.client_mock.get_input_entity = AsyncMock(return_value=user_mock)
+
+        message = MagicMock()
+        message.chat_peer = MagicMock()
+        message.from_peer = MagicMock()
+
+        result = await should_ignore_deleted_message(
+            message,
+            self.client_mock,
+            ignore_channels=False,
+            ignore_groups=False,
+            ignore_megagroups=False,
+            ignore_gigagroups=False,
+            member_ignore_threshold=0,
+            should_notify_outgoing_messages=True,
+        )
+        self.assertTrue(result)
+
+    @patch("packages.telegram_helpers.build_peer_entity")
+    async def test_returns_false_for_non_outgoing_when_notify_enabled(
+        self, mock_build_peer_entity
+    ):
+        chat_entity = MagicMock(spec=telethon.types.User)
+        me_entity = MagicMock(spec=telethon.types.User)
+        mock_build_peer_entity.return_value = chat_entity
+        self.client_mock.get_input_entity = AsyncMock(return_value=me_entity)
+
+        message = MagicMock()
+        message.chat_peer = MagicMock()
+        message.from_peer = MagicMock()
+
+        result = await should_ignore_deleted_message(
+            message,
+            self.client_mock,
+            ignore_channels=False,
+            ignore_groups=False,
+            ignore_megagroups=False,
+            ignore_gigagroups=False,
+            member_ignore_threshold=0,
+            should_notify_outgoing_messages=True,
+        )
+        self.assertFalse(result)
 
 
 if __name__ == "__main__":

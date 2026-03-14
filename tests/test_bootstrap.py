@@ -48,6 +48,16 @@ class CloserTests(unittest.IsolatedAsyncioTestCase):
         await closer()
         client_mock.disconnect.assert_called_once()
 
+    async def test_disconnects_client_with_none_return(self):
+        closer = Closer()
+        closer.stop_event = asyncio.Event()
+        client_mock = MagicMock()
+        client_mock.disconnect = MagicMock(return_value=None)
+        closer.client = client_mock
+        closer.bot = None
+        await closer()
+        client_mock.disconnect.assert_called_once()
+
     async def test_disconnects_bot(self):
         closer = Closer()
         closer.stop_event = asyncio.Event()
@@ -263,6 +273,48 @@ class ConfigureBotTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(SystemExit):
             await configure_bot(container_mock, "api_id", "api_hash", "me", "session1")
         mock_exit.assert_called_once_with(1)
+
+    @patch("packages.bootstrap.BotAssistant")
+    @patch.dict(
+        "os.environ",
+        {"TELEGRAM_BOT_TOKEN": "test_token", "TARGET_CHAT_IS_ID": "1"},
+    )
+    async def test_creates_bot_with_valid_target_chat(self, mock_bot_class):
+        from packages.bootstrap import configure_bot
+
+        container_mock = MagicMock()
+        session_mock = MagicMock()
+        container_mock.new_session.return_value = session_mock
+
+        bot_instance = AsyncMock()
+        bot_instance.__aenter__ = AsyncMock(return_value=bot_instance)
+        bot_instance.__aexit__ = AsyncMock()
+        mock_bot_class.return_value = bot_instance
+
+        notify_del, notify_unknown, bot = await configure_bot(
+            container_mock, "12345", "api_hash", "12345", "session1"
+        )
+
+        mock_bot_class.assert_called_once()
+        args, kwargs = mock_bot_class.call_args
+        self.assertEqual(args[0], 12345)
+        self.assertEqual(args[1], "12345")
+        self.assertEqual(args[2], "api_hash")
+        self.assertEqual(args[3], "test_token")
+        self.assertIn("session_maker", kwargs)
+        session_maker = kwargs["session_maker"]
+        self.assertTrue(callable(session_maker))
+        # session_maker should call container.new_session with session_id + "_bot"
+        returned_session = session_maker()
+        container_mock.new_session.assert_called_with("session1_bot")
+        self.assertIs(returned_session, session_mock)
+
+        bot_instance.__aenter__.assert_called_once()
+        self.assertIsNotNone(notify_del)
+        self.assertIsNotNone(notify_unknown)
+        self.assertIs(bot, bot_instance)
+        self.assertEqual(notify_del, bot_instance.notify_message_deletion)
+        self.assertEqual(notify_unknown, bot_instance.notify_unknown_message)
 
 
 class MakeClientTests(unittest.IsolatedAsyncioTestCase):

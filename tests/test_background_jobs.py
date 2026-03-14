@@ -80,6 +80,62 @@ class CleanOldMessagesLoopTests(unittest.IsolatedAsyncioTestCase):
                     stop_event=stop_event,
                 )
 
+    async def test_outer_exception_handler_from_finally(self):
+        session_maker_mock = MagicMock()
+        stop_event = asyncio.Event()
+        stop_event.set()
+
+        with patch("packages.background_jobs.delete") as delete_mock:
+            delete_mock.return_value = MagicMock()
+            session_maker_mock.begin.return_value.__enter__ = MagicMock(
+                return_value=MagicMock()
+            )
+            session_maker_mock.begin.return_value.__exit__ = MagicMock(
+                return_value=False
+            )
+
+            with patch("asyncio.wait_for", new_callable=AsyncMock) as wait_mock:
+                wait_mock.side_effect = RuntimeError("unexpected error in finally")
+                await clean_old_messages_loop(
+                    session_maker_mock,
+                    seconds_interval=0,
+                    ttl=timedelta(days=14),
+                    stop_event=stop_event,
+                )
+
+    async def test_loop_continues_on_timeout(self):
+        session_maker_mock = MagicMock()
+        stop_event = asyncio.Event()
+        call_count = 0
+
+        with patch("packages.background_jobs.delete") as delete_mock:
+            delete_mock.return_value = MagicMock()
+            session_maker_mock.begin.return_value.__enter__ = MagicMock(
+                return_value=MagicMock()
+            )
+            session_maker_mock.begin.return_value.__exit__ = MagicMock(
+                return_value=False
+            )
+
+            with patch("asyncio.wait_for", new_callable=AsyncMock) as wait_mock:
+
+                async def timeout_then_set(awaitable, timeout):
+                    nonlocal call_count
+                    call_count += 1
+                    if call_count == 1:
+                        raise asyncio.TimeoutError
+                    else:
+                        stop_event.set()
+                        await awaitable
+
+                wait_mock.side_effect = timeout_then_set
+                await clean_old_messages_loop(
+                    session_maker_mock,
+                    seconds_interval=0,
+                    ttl=timedelta(days=14),
+                    stop_event=stop_event,
+                )
+
 
 class PreloadMessagesTests(unittest.IsolatedAsyncioTestCase):
     @patch.dict("os.environ", {"PRELOAD_MESSAGES": "0"})

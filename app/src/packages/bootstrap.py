@@ -49,7 +49,7 @@ def ask_exit(
         logger.info("ask_exit re-entry detected, ignoring")
         return
     is_exiting = True
-    if additional:
+    if additional is not None:
         logger.info("[exit] Running user-provided cleanupper")
         try:
             loop.run_until_complete(additional())
@@ -368,7 +368,7 @@ def create_app_and_start_jobs() -> tuple:
 
     while (
         closer.stop_event is None or closer.started_event is None
-    ) and worker_thread.is_alive:
+    ) and worker_thread.is_alive():
         time.sleep(0)
 
     if closer.stop_event is None or closer.started_event is None:
@@ -383,6 +383,7 @@ def create_app_and_start_jobs() -> tuple:
             sqlalchemy_session_maker,
             configured_notify_message_deletion,
             configured_notify_unknown_message,
+            None,
             client,
             gather_with_concurrency,
         ),
@@ -393,7 +394,7 @@ def create_app_and_start_jobs() -> tuple:
         try:
             main_inner_future.result()
         except Exception as e:
-            if closer.stop_event.is_set():
+            if closer.stop_event is not None and closer.stop_event.is_set():
                 return
             logger.error(f"Error while running main job: {e}", exc_info=True)
             sync_closer()

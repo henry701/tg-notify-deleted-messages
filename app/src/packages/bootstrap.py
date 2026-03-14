@@ -81,6 +81,14 @@ async def make_client(
     loop: asyncio.AbstractEventLoop,
 ):
     override_max_chunk_size = int(os.getenv("TELETHON_OVERRIDE_MAX_CHUNK_SIZE", "-1"))
+    telegram_max_chunk_size_env = os.getenv("TELEGRAM_MAX_CHUNK_SIZE")
+    if telegram_max_chunk_size_env is not None:
+        try:
+            telegram_max_chunk_size = int(telegram_max_chunk_size_env)
+            if telegram_max_chunk_size > 0:
+                override_max_chunk_size = telegram_max_chunk_size
+        except ValueError:
+            pass
     if override_max_chunk_size > 0:
         telethon.client.messages._MAX_CHUNK_SIZE = override_max_chunk_size
 

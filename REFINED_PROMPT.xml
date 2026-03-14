@@ -1,0 +1,62 @@
+<REFINED_PROMPT_ONLY_INSIDE>
+Continue improving the tg-notify-deleted-messages project from its current branch state. The project is already substantially refactored and well-tested; do not waste time reconciling obsolete baselines.
+
+Current verified baseline:
+- `python -m pytest --cov=app/src --cov-report=term-missing -q`
+- `236 passed`
+- total coverage is `91%`
+- highest-value remaining gaps are:
+  - `app/src/packages/bootstrap.py` (`75%`)
+  - `app/src/packages/background_jobs.py` (`87%`)
+  - `app/src/packages/http.py` (`94%`)
+
+Primary goal:
+- make one more safe, meaningful cleanup/refactor/testing pass that improves real maintainability or coverage without destabilizing the app
+
+What "good" looks like:
+1. Prefer real modularity or testability improvements over cosmetic churn
+2. Focus on the remaining weak or high-complexity modules, especially `bootstrap.py`, `background_jobs.py`, or `http.py`
+3. Add or tighten focused tests when they cover real behavior
+4. Keep the app runnable; avoid giant rewrites
+5. Make incremental, reviewable commits and push validated progress
+
+Constraints:
+- do not assume the old `34 passed` / `18%` baseline is relevant; it is stale
+- do not pad coverage with meaningless tests
+- prefer dependency-injected helpers and pure functions over patch-heavy tests
+- if you find the codebase already in a good state, choose the next smallest meaningful improvement instead of inventing a rewrite
+
+Validation expectations:
+- keep `python -m pytest --cov=app/src --cov-report=term-missing -q` green
+- preserve or improve the current `91%` total coverage
+- if behavior or module boundaries change, update tests and docs/imports accordingly
+
+Stop condition:
+- stop only when the task is complete or when there is no more clearly safe, meaningful progress to make
+
+SPECIFIC ACTIONABLE STEPS:
+
+For bootstrap.py (75% coverage):
+1. Add tests for TELETHON_OVERRIDE_MAX_CHUNK_SIZE and TELEGRAM_MAX_CHUNK_SIZE environment variable handling (lines 88-92)
+2. Add tests for bot configuration when TARGET_CHAT_IS_ID is set (lines 153-167) 
+3. Add tests for error handling in client_main_loop_job when notification functions are None (lines 198-199, 204-205)
+4. Add tests for edge cases in worker_function and make_sync_closer (lines 262-264)
+5. Add tests for the create_app_and_start_jobs function flow (lines 303-421)
+
+For background_jobs.py (87% coverage):
+1. Add tests for the exception handling paths in clean_old_messages_loop (lines 52->34, 57-58)
+2. Add tests for the preload_messages status reporting functionality (lines 87-92)
+3. Add tests for the dialog processing loop when no dialogs are present (lines 129, 131)
+4. Add tests for the preloaded messages counting and reporting logic (lines 139->143, 145)
+
+For http.py (94% coverage):
+1. Add tests for bearer token validation edge cases (lines 106-109)
+2. Add tests for the health check retry mechanism and consecutive failure logic (lines 201->219, 213-218)
+3. Add tests for the suicide_after_consecutive_health_failures functionality (line 226)
+
+VERIFICATION COMMANDS:
+- After making changes, run: `python -m pytest --cov=app/src --cov-report=term-missing -q`
+- Ensure total coverage remains at or above 91%
+- Ensure all 236 existing tests continue to pass
+- Run the application briefly to ensure basic functionality works: `docker-compose up -d app` then `docker-compose stop app`
+</REFINED_PROMPT_ONLY_INSIDE>

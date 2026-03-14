@@ -246,7 +246,6 @@ class ShouldIgnoreDeletedMessageTests(unittest.IsolatedAsyncioTestCase):
         self, mock_build_peer_entity
     ):
         user_mock = MagicMock(spec=telethon.types.User)
-        my_peer_entity = MagicMock()
         mock_build_peer_entity.return_value = user_mock
         self.client_mock.get_input_entity = AsyncMock(return_value=user_mock)
 

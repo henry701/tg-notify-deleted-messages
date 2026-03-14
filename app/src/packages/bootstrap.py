@@ -19,7 +19,11 @@ from packages.background_jobs import (
     messages_ttl_delta,
     preload_messages,
 )
-from packages.config import compute_effective_chunk_size
+from packages.config import (
+    compute_effective_chunk_size,
+    get_env_int,
+    validate_chunk_size,
+)
 from packages.bot_assistant import BotAssistant
 from packages.event_orchestration import add_event_handlers
 from packages.models.root.TelegramMessage import TelegramMessage
@@ -82,11 +86,13 @@ async def make_client(
     loop: asyncio.AbstractEventLoop,
 ):
     # Determine effective max chunk size using centralized config helper
-    override_env_val = int(os.getenv("TELETHON_OVERRIDE_MAX_CHUNK_SIZE", "-1"))
+    override_env_val = get_env_int("TELETHON_OVERRIDE_MAX_CHUNK_SIZE", -1)
     telegram_max_chunk_size_env = os.getenv("TELEGRAM_MAX_CHUNK_SIZE")
     effective_size = compute_effective_chunk_size(
         override_env_val, telegram_max_chunk_size_env
     )
+    # Safety: clamp to sane bounds for reliability and testability
+    effective_size = validate_chunk_size(effective_size, -1, 65536)
     if effective_size > 0:
         telethon.client.messages._MAX_CHUNK_SIZE = effective_size
 

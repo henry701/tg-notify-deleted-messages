@@ -102,5 +102,93 @@ class FilterLoadedMessagesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results, [])
 
 
+class LoadMessagesFromDbPeerFilteringTests(unittest.IsolatedAsyncioTestCase):
+    async def test_filters_by_peer_entity_id_and_type(self):
+        from telethon.tl.types import User
+
+        peer_entity = User(id=42)
+
+        session_mock = MagicMock()
+        session_mock.execute.return_value.scalars.return_value.all.return_value = []
+
+        query, results, unloaded = await load_messages_from_db(
+            [1, 2], peer_entity, session_mock
+        )
+        session_mock.execute.assert_called_once()
+        self.assertEqual(results, [])
+        self.assertEqual(unloaded, [1, 2])
+
+    async def test_loads_matching_messages_with_peer_filter(self):
+        from telethon.tl.types import Channel, ChatPhotoEmpty
+
+        peer_entity = Channel(id=42, title="Test", photo=ChatPhotoEmpty(), date=None)
+
+        msg = MagicMock()
+        msg.id = 1
+
+        session_mock = MagicMock()
+        session_mock.execute.return_value.scalars.return_value.all.return_value = [msg]
+
+        query, results, unloaded = await load_messages_from_db(
+            [1, 2], peer_entity, session_mock
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(unloaded, [2])
+
+
+class LoadMessagesByParametersFullFlowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_filters_loaded_messages_when_peer_not_ignored(self):
+        client_mock = AsyncMock()
+
+        msg_pass = MagicMock()
+        msg_pass.id = 1
+        msg_pass.from_peer = None
+        msg_pass.chat_peer = None
+
+        msg_filtered = MagicMock()
+        msg_filtered.id = 2
+        msg_filtered.from_peer = None
+        msg_filtered.chat_peer = None
+
+        session_mock = MagicMock()
+        session_mock.execute.return_value.scalars.return_value.all.return_value = [
+            msg_pass,
+            msg_filtered,
+        ]
+
+        async def _ignore_msg_side_effect(message, client_arg, *a, **kw):
+            return message.id == 2
+
+        with (
+            patch(
+                "packages.message_loading.raw_should_ignore_message_chat",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "packages.message_loading.should_ignore_deleted_message",
+                new_callable=AsyncMock,
+                side_effect=_ignore_msg_side_effect,
+            ),
+        ):
+            results, query, unloaded, filtered = await load_messages_by_parameters(
+                [1, 2],
+                None,
+                client_mock,
+                session_mock,
+                ignore_channels=False,
+                ignore_groups=False,
+                ignore_megagroups=False,
+                ignore_gigagroups=False,
+                member_ignore_threshold=0,
+                should_load_outgoing_messages=True,
+            )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].id, 1)
+        self.assertEqual(unloaded, [])
+        self.assertEqual(filtered, [2])
+
+
 if __name__ == "__main__":
     unittest.main()

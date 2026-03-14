@@ -664,6 +664,8 @@ class GetStoreMessageBranchTests(unittest.IsolatedAsyncioTestCase):
     async def test_updates_existing_message(self):
         client_mock = AsyncMock()
         session_maker_mock = MagicMock()
+        built_chat_peer = MagicMock()
+        built_chat_peer.id = 987
 
         existing_message = MagicMock()
         existing_message.id = 1
@@ -687,7 +689,7 @@ class GetStoreMessageBranchTests(unittest.IsolatedAsyncioTestCase):
         message_mock.id = 1
         message_mock.message = "updated text"
         message_mock.from_id = None
-        message_mock.peer_id = MagicMock()
+        message_mock.peer_id = MagicMock(name="telethon_peer")
         message_mock.media = None
         message_mock.date = MagicMock()
 
@@ -705,10 +707,12 @@ class GetStoreMessageBranchTests(unittest.IsolatedAsyncioTestCase):
                 new_callable=AsyncMock,
             ) as get_blob,
         ):
-            build_peer.return_value = None
+            build_peer.side_effect = [None, built_chat_peer]
             get_blob.return_value = None
             result = await store_fn(message_mock)
             self.assertTrue(result)
+            peer_filter = query_mock.filter.call_args.args[1]
+            self.assertEqual(peer_filter.right.value, built_chat_peer.id)
             self.assertEqual(existing_message.text, "updated text")
             session_mock.merge.assert_called_once_with(existing_message)
 

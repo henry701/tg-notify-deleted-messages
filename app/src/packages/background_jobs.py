@@ -67,7 +67,7 @@ async def preload_messages(
         logger.info("PRELOAD_MESSAGES is disabled, skipping preloading messages")
         return
 
-    if not client.is_connected or not await client.is_user_authorized():
+    if not client.is_connected() or not await client.is_user_authorized():
         logger.info("No client connected and authorized, skipping preloading messages")
         return
 

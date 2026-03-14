@@ -541,5 +541,78 @@ class FormatDefaultUnknownMessageTextTests(unittest.IsolatedAsyncioTestCase):
                 )
 
 
+class BuildTelegramPeerExistingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_returns_existing_peer_from_db(self):
+        from telethon.tl.types import User
+
+        client = AsyncMock()
+        existing_peer = MagicMock(spec=TelegramPeer)
+        existing_peer.peer_id = 100
+        existing_peer.type = PeerType.USER
+
+        session_mock = MagicMock()
+        session_mock.execute.return_value.scalar.return_value = existing_peer
+
+        session_maker = MagicMock()
+        session_maker.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_entity = User(id=100)
+        mock_entity.access_hash = 123
+        client.get_entity = AsyncMock(return_value=mock_entity)
+        client.get_peer_id = AsyncMock(return_value=100)
+
+        peer_input = MagicMock()
+        peer_input.peer_id = 100
+        peer_input.type = PeerType.USER
+
+        result = await build_telegram_peer(peer_input, client, session_maker)
+
+        self.assertIs(result, existing_peer)
+
+    async def test_creates_and_returns_new_peer(self):
+        from telethon.tl.types import Channel, ChatPhotoEmpty
+
+        client = AsyncMock()
+        new_peer = MagicMock(spec=TelegramPeer)
+        new_peer.peer_id = 200
+        new_peer.type = PeerType.CHANNEL
+
+        call_count = 0
+
+        def scalar_side_effect():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return None
+            return new_peer
+
+        session_mock = MagicMock()
+        session_mock.execute.return_value.scalar.side_effect = scalar_side_effect
+
+        session_maker = MagicMock()
+        session_maker.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_entity = Channel(id=200, title="Test", photo=ChatPhotoEmpty(), date=None)
+        mock_entity.access_hash = 12345
+        client.get_entity = AsyncMock(return_value=mock_entity)
+        client.get_peer_id = AsyncMock(return_value=200)
+
+        peer_input = MagicMock()
+        peer_input.peer_id = 200
+        peer_input.type = PeerType.CHANNEL
+
+        result = await build_telegram_peer(peer_input, client, session_maker)
+
+        self.assertIs(result, new_peer)
+        self.assertEqual(session_mock.execute.call_count, 2)
+        session_mock.merge.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

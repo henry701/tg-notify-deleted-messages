@@ -355,15 +355,18 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
             message.peer_id, client, sqlalchemy_session_maker
         )
         blob = await get_message_media_blob(message)
+        built_chat_peer_id = getattr(built_chat_peer, "id", None)
         with sqlalchemy_session_maker.begin() as sqlalchemy_session:
-            existing = (
-                sqlalchemy_session.query(TelegramMessage)
-                .filter(
-                    TelegramMessage.id == message.id,
-                    TelegramMessage.chat_peer_id == message.peer_id,
+            existing = None
+            if built_chat_peer_id is not None:
+                existing = (
+                    sqlalchemy_session.query(TelegramMessage)
+                    .filter(
+                        TelegramMessage.id == message.id,
+                        TelegramMessage.chat_peer_id == built_chat_peer_id,
+                    )
+                    .first()
                 )
-                .first()
-            )
 
             if existing:
                 existing.text = message.message

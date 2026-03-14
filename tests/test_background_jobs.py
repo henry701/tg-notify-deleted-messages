@@ -85,6 +85,7 @@ class PreloadMessagesTests(unittest.IsolatedAsyncioTestCase):
     @patch.dict("os.environ", {"PRELOAD_MESSAGES": "0"})
     async def test_skips_when_disabled(self):
         client_mock = AsyncMock()
+        client_mock.is_connected = MagicMock(return_value=True)
         session_maker_mock = MagicMock()
         await preload_messages(client_mock, session_maker_mock)
         client_mock.is_connected.assert_not_called()
@@ -92,18 +93,20 @@ class PreloadMessagesTests(unittest.IsolatedAsyncioTestCase):
     @patch.dict("os.environ", {"PRELOAD_MESSAGES": "1"})
     async def test_skips_when_not_connected(self):
         client_mock = AsyncMock()
-        client_mock.is_connected = False
+        client_mock.is_connected = MagicMock(return_value=False)
         session_maker_mock = MagicMock()
         await preload_messages(client_mock, session_maker_mock)
+        client_mock.is_connected.assert_called_once_with()
         client_mock.is_user_authorized.assert_not_called()
 
     @patch.dict("os.environ", {"PRELOAD_MESSAGES": "1"})
     async def test_skips_when_not_authorized(self):
         client_mock = AsyncMock()
-        client_mock.is_connected = True
+        client_mock.is_connected = MagicMock(return_value=True)
         client_mock.is_user_authorized = AsyncMock(return_value=False)
         session_maker_mock = MagicMock()
         await preload_messages(client_mock, session_maker_mock)
+        client_mock.is_connected.assert_called_once_with()
         client_mock.is_user_authorized.assert_called_once()
 
     @patch.dict(
@@ -112,7 +115,7 @@ class PreloadMessagesTests(unittest.IsolatedAsyncioTestCase):
     )
     async def test_preloads_with_no_dialogs(self):
         client_mock = AsyncMock()
-        client_mock.is_connected = True
+        client_mock.is_connected = MagicMock(return_value=True)
         client_mock.is_user_authorized = AsyncMock(return_value=True)
 
         async def _empty_gen():
@@ -129,7 +132,7 @@ class PreloadMessagesTests(unittest.IsolatedAsyncioTestCase):
     )
     async def test_preloads_with_zero_report_interval(self):
         client_mock = AsyncMock()
-        client_mock.is_connected = True
+        client_mock.is_connected = MagicMock(return_value=True)
         client_mock.is_user_authorized = AsyncMock(return_value=True)
 
         async def _empty_gen():
@@ -146,7 +149,7 @@ class PreloadMessagesTests(unittest.IsolatedAsyncioTestCase):
     )
     async def test_preloads_messages_for_dialog(self):
         client_mock = AsyncMock()
-        client_mock.is_connected = True
+        client_mock.is_connected = MagicMock(return_value=True)
         client_mock.is_user_authorized = AsyncMock(return_value=True)
 
         from datetime import datetime, timezone
@@ -230,6 +233,48 @@ class MessagesTtlDeltaTests(unittest.TestCase):
 
     def test_default_is_14_days(self):
         self.assertEqual(messages_ttl_delta.days, 14)
+
+
+class PreloadMessagesIgnoredDialogTests(unittest.IsolatedAsyncioTestCase):
+    @patch.dict(
+        "os.environ",
+        {"PRELOAD_MESSAGES": "1", "PRELOAD_MESSAGES_STATUS_REPORT_INTERVAL": "0"},
+    )
+    async def test_skips_ignored_dialog(self):
+        client_mock = AsyncMock()
+        client_mock.is_connected = MagicMock(return_value=True)
+        client_mock.is_user_authorized = AsyncMock(return_value=True)
+
+        dialog_mock = MagicMock()
+        dialog_mock.id = 456
+        dialog_mock.input_entity = MagicMock()
+
+        entity_mock = MagicMock()
+        client_mock.get_entity = AsyncMock(return_value=entity_mock)
+
+        async def iter_dialogs_gen():
+            yield dialog_mock
+
+        client_mock.iter_dialogs = iter_dialogs_gen
+
+        session_maker_mock = MagicMock()
+
+        with patch(
+            "packages.background_jobs.get_should_ignore_message_chat",
+        ) as ignore_mock:
+            ignore_fn = AsyncMock(return_value=True)
+            ignore_mock.return_value = ignore_fn
+
+            with patch(
+                "packages.background_jobs.get_store_message_if_not_exists",
+            ) as store_mock:
+                store_fn = AsyncMock(return_value=True)
+                store_mock.return_value = store_fn
+
+                await preload_messages(client_mock, session_maker_mock)
+
+                ignore_fn.assert_called_once_with(entity_mock)
+                store_fn.assert_not_called()
 
 
 if __name__ == "__main__":

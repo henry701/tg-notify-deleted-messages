@@ -649,5 +649,122 @@ class SaveSessionsWithBotRouteTests(unittest.TestCase):
             bot_mock.client.session.save.assert_called_once()
 
 
+class AuthRouteSentCodeTests(unittest.TestCase):
+    @patch.dict("os.environ", {"PHONE_NUMBER": "123456"})
+    @patch("asyncio.run_coroutine_threadsafe")
+    def test_auth_sent_code_returns_401(self, mock_run_coro):
+        from telethon.tl.types.auth import SentCode
+        from packages.http import create_app
+
+        send_future = MagicMock()
+        send_future.result.return_value = MagicMock()
+
+        sent_code_result = MagicMock(spec=SentCode)
+        sent_code_result.phone_code_hash = "hash2"
+        sign_in_future = MagicMock()
+        sign_in_future.result.return_value = sent_code_result
+
+        def run_coro_side_effect(coro, loop):
+            coro_str = str(coro)
+            coro.close()
+            if "send_code" in coro_str:
+                return send_future
+            elif "sign_in" in coro_str:
+                return sign_in_future
+            return MagicMock()
+
+        mock_run_coro.side_effect = run_coro_side_effect
+
+        client_mock = MagicMock()
+        loop_mock = MagicMock()
+        session_maker_mock = MagicMock()
+        sync_closer = MagicMock()
+        flask_app = create_app(
+            client_mock, None, loop_mock, session_maker_mock, sync_closer
+        )
+        with flask_app.test_client() as client:
+            client.get("/send_code")
+            response = client.get("/auth?code=12345")
+            self.assertEqual(response.status_code, 401)
+            self.assertIn(b"auth is still incomplete", response.data)
+
+
+class HealthRouteBotErrorTests(unittest.TestCase):
+    @patch.dict("os.environ", {"PHONE_NUMBER": "123456"})
+    @patch("asyncio.run_coroutine_threadsafe")
+    def test_health_bot_error_is_returned_from_actual_health(self, mock_run_coro):
+        from packages.http import create_app
+
+        client_mock = MagicMock()
+        client_mock.is_connected.return_value = True
+        loop_mock = MagicMock()
+        loop_mock.is_running.return_value = True
+
+        bot_mock = MagicMock()
+        bot_mock.client = MagicMock()
+        bot_mock.client.is_connected.return_value = True
+
+        session_maker_mock = MagicMock()
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        auth_results = [True, Exception("Bot auth failed")]
+
+        def run_coro_side_effect(coro, loop):
+            outcome = auth_results.pop(0)
+            future = MagicMock()
+            if isinstance(outcome, Exception):
+                future.result.side_effect = outcome
+            else:
+                future.result.return_value = outcome
+            return close_coro_and_return(coro, future)
+
+        mock_run_coro.side_effect = run_coro_side_effect
+
+        sync_closer = MagicMock()
+        flask_app = create_app(
+            client_mock, bot_mock, loop_mock, session_maker_mock, sync_closer
+        )
+        with flask_app.test_client() as client:
+            response = client.get("/health")
+            self.assertEqual(response.status_code, 500)
+        self.assertEqual(mock_run_coro.call_count, 2)
+
+    @patch.dict("os.environ", {"PHONE_NUMBER": "123456"})
+    @patch("asyncio.run_coroutine_threadsafe")
+    def test_health_client_error_is_returned_from_actual_health(self, mock_run_coro):
+        from packages.http import create_app
+
+        client_mock = MagicMock()
+        client_mock.is_connected.return_value = True
+        loop_mock = MagicMock()
+        loop_mock.is_running.return_value = True
+
+        session_maker_mock = MagicMock()
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        future = MagicMock()
+        future.result.side_effect = Exception("Client auth failed")
+        mock_run_coro.side_effect = lambda coro, loop: close_coro_and_return(
+            coro, future
+        )
+
+        sync_closer = MagicMock()
+        flask_app = create_app(
+            client_mock, None, loop_mock, session_maker_mock, sync_closer
+        )
+        with flask_app.test_client() as client:
+            response = client.get("/health")
+            self.assertEqual(response.status_code, 500)
+        self.assertEqual(mock_run_coro.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

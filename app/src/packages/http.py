@@ -12,7 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql.expression import select
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
-from tenacity import retry, retry_if_exception_type, retry_if_result, stop_after_attempt
+from tenacity import retry, retry_if_exception_type, stop_after_attempt
 
 from packages.background_jobs import preload_messages
 from packages.bot_assistant import BotAssistant
@@ -193,11 +193,7 @@ def add_informative_routes(
 
     @flask_app.route("/health", methods=["GET"])
     @retry(
-        retry=retry_if_exception_type((IOError, sqlalchemy.exc.DBAPIError))
-        | retry_if_result(
-            lambda result: isinstance(result, flask.Response)
-            and str(result.status_code).startswith("5")
-        ),
+        retry=retry_if_exception_type((IOError, sqlalchemy.exc.DBAPIError)),
         stop=stop_after_attempt(3),
     )
     def health():
@@ -242,7 +238,7 @@ def add_informative_routes(
         try:
             asyncio.run_coroutine_threadsafe(client.is_user_authorized(), loop).result()
         except Exception as e:
-            log_and_return_500(
+            return log_and_return_500(
                 f"Telegram Error while checking Telegram Client Communication: {e}"
             )
         if bot is not None and bot.client is not None and bot.client.is_connected():
@@ -252,7 +248,7 @@ def add_informative_routes(
                     bot.client.is_user_authorized(), loop
                 ).result()
             except Exception as e:
-                log_and_return_500(
+                return log_and_return_500(
                     f"Telegram Error while checking Telegram Bot Communication: {e}"
                 )
         logger.debug("Returning success from health check")

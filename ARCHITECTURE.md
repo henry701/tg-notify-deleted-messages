@@ -2,7 +2,7 @@
 
 ## Overview
 
-`tg-notify-deleted-messages` is a Telegram message deletion tracking service built with Telethon, SQLAlchemy, and Flask. It monitors incoming/outgoing messages, stores them in a database, and notifies when messages are deleted by interlocutors.
+`tg-notify-deleted-messages` is a Telegram message tracking service built with Telethon, SQLAlchemy, and Flask. It monitors incoming/outgoing messages, stores them in a database, and notifies when messages are deleted or edited by interlocutors.
 
 ## Component Layout
 
@@ -17,28 +17,29 @@ app/src/
     ├── db_bootstrap.py     # Engine and session factory creation with env-configurable args
     ├── db_helpers.py       # Database URL handling, schema creation, column encryption
     ├── env_helpers.py      # .env loading and required-env-variable enforcement
-    ├── event_orchestration.py  # Event handlers (NewMessage, MessageDeleted), message storage, filtering integration
+    ├── event_orchestration.py  # Event handlers (NewMessage, MessageDeleted, MessageEdited), message storage/upsert, filtering integration
     ├── filtering.py        # Message filtering: chat type checks, member threshold, outgoing exclusion
     ├── http.py             # Flask app factory, HTTP routes (auth, health, status endpoints)
     ├── message_loading.py  # DB query construction and message retrieval with filter application
-    ├── notifications.py    # Notification dispatch: base (mark deleted), default (send to self/bot)
+    ├── notifications.py    # Notification dispatch: deletion (mark deleted) and edit (merge) base/default handlers, mention text helper
     ├── telegram_helpers.py # Peer building, mention formatting, entity resolution, client refresh
     └── models/
         ├── __init__.py     # SQLAlchemy Base, encryption engine selection (AES, AES-GCM)
         ├── root/
-        │   ├── TelegramMessage.py  # Message ORM: id, peers, text, media, timestamp, deleted flag
+        │   ├── TelegramMessage.py  # Message ORM: id, peers, text, media, timestamp, edit_date, deleted flag
         │   └── TelegramPeer.py     # Peer ORM: peer_id, access_hash, type with unique constraint
         └── support/
-            └── PeerType.py         # IntEnum mapping Telethon types to DB integers
+            └── PeerType.py         # IntEnum mapping Telethon types to DB integers (includes ENCRYPTED_CHAT)
 ```
 
 ## Data Flow
 
-1. **Ingestion**: `NewMessage` event handler stores messages via `store_message_if_not_exists()` (`event_orchestration.py`)
+1. **Ingestion**: `NewMessage` event handler stores or updates messages via `store_message()` (upsert logic in `event_orchestration.py`)
 2. **Deletion Detection**: `MessageDeleted` event triggers DB lookup via `load_messages_from_db()` (`event_orchestration.py`)
-3. **Filtering**: `filter_loaded_messages()` applies chat type and member threshold filters (`filtering.py`)
-4. **Notification**: `notify_message_deletion()` marks message deleted in DB and dispatches notification (`notifications.py`)
-5. **Cleanup**: Background loop deletes messages older than `MESSAGES_TTL_DAYS` (`background_jobs.py`)
+3. **Edit Detection**: `MessageEdited` event triggers DB lookup via `load_messages_by_parameters()`, then notifies via edit handlers (`event_orchestration.py`)
+4. **Filtering**: `filter_loaded_messages()` applies chat type and member threshold filters (`filtering.py`)
+5. **Notification**: Deletion handlers mark message deleted in DB and dispatch notification; edit handlers merge updated text and dispatch edit notification (`notifications.py`)
+6. **Cleanup**: Background loop deletes messages older than `MESSAGES_TTL_DAYS` (`background_jobs.py`)
 
 ## Bootstrap Sequence
 

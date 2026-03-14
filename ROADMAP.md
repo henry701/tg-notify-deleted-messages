@@ -1,23 +1,10 @@
 # Roadmap
 
-## Edits
+## Edits ✅
 
-Currently the application stores only the first version of the message.
-This means that after your companion edits the message and then deletes it,
-you will receive the information only about the first version of the message.
-
-The best implementation would be to store all versions of the message and receive
-all of them.
-
-### Message versions
-
-As soon as your companion knows that you using this tool, they will start
-editing the messages, instead of deleting them. To handle this, we can store the
-versions of every message, and after forwarding the original message to the bot,
-it should send you the history of edits.
-
-Or it could simply notify right away with the old version of the message every
-time an edit event arrives for that message.
+Message edit detection and notification is now implemented. The application
+stores all versions of messages and notifies you when a companion edits a
+message. Edit notifications include the sender, chat, and new text content.
 
 ## On-Demand Decryption
 

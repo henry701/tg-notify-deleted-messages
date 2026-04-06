@@ -1,8 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 from packages.telegram_helpers import build_telegram_peer
-from telethon.tl.types import User, Channel, ChatPhotoEmpty
-from sqlalchemy.orm import sessionmaker
+from telethon.tl.types import User
 
 
 class BuildTelegramPeerTests(unittest.IsolatedAsyncioTestCase):

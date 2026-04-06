@@ -1,7 +1,3 @@
-import os
-import importlib
-
-
 def test_get_env_int_reads_existing_value(monkeypatch):
     monkeypatch.setenv("SOME_INT", "42")
     from packages.config import get_env_int

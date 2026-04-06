@@ -766,5 +766,150 @@ class HealthRouteBotErrorTests(unittest.TestCase):
         self.assertEqual(mock_run_coro.call_count, 1)
 
 
+class HealthConsecutiveFailuresTests(unittest.TestCase):
+    @patch.dict(
+        "os.environ",
+        {"PHONE_NUMBER": "123456", "SUICIDE_AFTER_CONSECUTIVE_HEALTH_FAILURES": "0"},
+    )
+    @patch("asyncio.run_coroutine_threadsafe")
+    def test_health_tracks_consecutive_failures_non_2xx(self, mock_run_coro):
+        from packages.http import create_app
+
+        client_mock = MagicMock()
+        client_mock.is_connected.return_value = False
+        loop_mock = MagicMock()
+        loop_mock.is_running.return_value = True
+
+        session_maker_mock = MagicMock()
+
+        sync_closer = MagicMock()
+        flask_app = create_app(
+            client_mock, None, loop_mock, session_maker_mock, sync_closer
+        )
+
+        with flask_app.test_client() as client:
+            client.get("/health")
+
+        with flask_app.test_client() as client:
+            client.get("/health")
+
+    @patch.dict(
+        "os.environ",
+        {"PHONE_NUMBER": "123456", "SUICIDE_AFTER_CONSECUTIVE_HEALTH_FAILURES": "0"},
+    )
+    @patch("asyncio.run_coroutine_threadsafe")
+    def test_health_resets_failures_on_success(self, mock_run_coro):
+        from packages.http import create_app
+
+        future_mock = MagicMock()
+        future_mock.result.return_value = True
+        mock_run_coro.side_effect = lambda coro, loop: close_coro_and_return(
+            coro, future_mock
+        )
+
+        client_mock = MagicMock()
+        client_mock.is_connected.return_value = True
+        loop_mock = MagicMock()
+        loop_mock.is_running.return_value = True
+
+        session_maker_mock = MagicMock()
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        sync_closer = MagicMock()
+        flask_app = create_app(
+            client_mock, None, loop_mock, session_maker_mock, sync_closer
+        )
+
+        with flask_app.test_client() as client:
+            client.get("/health")
+
+        client_mock.is_connected.return_value = False
+        with flask_app.test_client() as client:
+            client.get("/health")
+
+    @patch.dict(
+        "os.environ",
+        {"PHONE_NUMBER": "123456", "SUICIDE_AFTER_CONSECUTIVE_HEALTH_FAILURES": "2"},
+    )
+    @patch("asyncio.run_coroutine_threadsafe")
+    def test_health_suicide_on_consecutive_failures(self, mock_run_coro):
+        from packages.http import create_app
+
+        client_mock = MagicMock()
+        client_mock.is_connected.return_value = False
+        loop_mock = MagicMock()
+        loop_mock.is_running.return_value = True
+
+        session_maker_mock = MagicMock()
+
+        sync_closer = MagicMock()
+        flask_app = create_app(
+            client_mock, None, loop_mock, session_maker_mock, sync_closer
+        )
+
+        with patch("packages.http.os._exit") as mock_exit:
+            with flask_app.test_client() as client:
+                client.get("/health")
+            mock_exit.assert_not_called()
+
+            with flask_app.test_client() as client:
+                client.get("/health")
+            mock_exit.assert_called_once_with(1)
+
+
+class PreloadCallbackExceptionTests(unittest.TestCase):
+    @patch.dict("os.environ", {"PHONE_NUMBER": "123456"})
+    @patch("asyncio.run_coroutine_threadsafe")
+    def test_preload_callback_exception_handled(self, mock_run_coro):
+        import telethon.types
+        from packages.http import create_app
+
+        send_future = MagicMock()
+        send_future.result.return_value = MagicMock()
+
+        user_mock = MagicMock(spec=telethon.types.User)
+        sign_in_future = MagicMock()
+        sign_in_future.result.return_value = user_mock
+
+        preload_future = MagicMock()
+
+        def run_coro_side_effect(coro, loop):
+            coro_str = str(coro)
+            coro.close()
+            if "send_code" in coro_str:
+                return send_future
+            elif "sign_in" in coro_str:
+                return sign_in_future
+            elif "preload" in coro_str:
+                return preload_future
+            return MagicMock()
+
+        mock_run_coro.side_effect = run_coro_side_effect
+
+        client_mock = MagicMock()
+        loop_mock = MagicMock()
+        session_maker_mock = MagicMock()
+        sync_closer = MagicMock()
+        flask_app = create_app(
+            client_mock, None, loop_mock, session_maker_mock, sync_closer
+        )
+
+        with flask_app.test_client() as client:
+            client.get("/send_code")
+
+        def raise_in_callback(inner_future):
+            inner_future.result.side_effect = Exception("preload failed")
+
+        preload_future.add_done_callback.side_effect = raise_in_callback
+
+        with flask_app.test_client() as client:
+            response = client.get("/auth?code=12345")
+            self.assertEqual(response.status_code, 204)
+
+
 if __name__ == "__main__":
     unittest.main()

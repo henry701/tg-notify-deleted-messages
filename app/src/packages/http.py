@@ -111,7 +111,13 @@ def create_app(
                             exc_info=True,
                         )
 
-                preload_future.add_done_callback(handle_preload_result)
+                try:
+                    preload_future.add_done_callback(handle_preload_result)
+                except Exception as e:
+                    logger.error(
+                        f"Error while registering preload callback: {e}",
+                        exc_info=True,
+                    )
                 return flask.Response(status=204)
             if isinstance(sign_in_result, telethon.types.auth.SentCode):
                 sent_code[0] = sign_in_result
@@ -208,7 +214,7 @@ def add_informative_routes(
             if (
                 suicide_after_consecutive_health_failures
                 and consecutive_health_failures
-                > suicide_after_consecutive_health_failures
+                >= suicide_after_consecutive_health_failures
             ):
                 logger.critical(
                     "Suiciding app, health check failed consecutively for %s times!",

@@ -6,7 +6,7 @@ variables:
   CONTAINER_LATEST: $CI_REGISTRY_IMAGE:latest
   CONTAINER_CACHE_DEFAULT: $CI_REGISTRY_IMAGE:buildcache-$CI_DEFAULT_BRANCH
   CONTAINER_CACHE_BRANCH: $CI_REGISTRY_IMAGE:buildcache-$CI_COMMIT_REF_SLUG
-  PYTHONPATH: "$CI_PROJECT_DIR/app/src"
+  PYTHONPATH: "/app/src"
 
 stages:
   - build
@@ -62,76 +62,50 @@ docker-build:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH'
 
-.test-base:
+# Template for containerized tests
+.test-containerized:
   stage: test
-  image: docker:25
-  services:
-    - docker:25-dind
-  variables:
-    DOCKER_TLS_CERTDIR: "/certs"
-    DOCKER_HOST: tcp://docker:2376
+  image: $CONTAINER_IMAGE
+  needs:
+    - job: docker-build
+      artifacts: true
   before_script:
-    - docker load -i container-image.tar
+    - pip install --no-cache-dir pytest -q
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH'
 
 unit-tests:
-  extends: .test-base
-  needs:
-    - job: docker-build
-      artifacts: true
+  extends: .test-containerized
   variables:
     DATABASE_URL: "sqlite:///test.db"
   script:
-    - >
-      docker run --rm --network host --entrypoint python
-      -v "$CI_PROJECT_DIR/tests:/tests:ro"
-      -w /usr/app/src
-      -e DATABASE_URL="$DATABASE_URL"
-      -e PYTHONPATH=/usr/app/src
-      "$CONTAINER_IMAGE" -m pytest '/tests' -k 'test_' -v
+    - python -m pytest $CI_PROJECT_DIR/tests -k 'test_' -v
 
 integration-sqlite:
-  extends: .test-base
-  needs:
-    - job: docker-build
-      artifacts: true
+  extends: .test-containerized
   variables:
     INTEGRATION_DATABASE_URL: "sqlite+pysqlite:////tmp/tgdel-integration.sqlite3"
   script:
     - rm -f /tmp/tgdel-integration.sqlite3
-    - >
-      docker run --rm --network host --entrypoint python
-      -v "$CI_PROJECT_DIR/tests:/tests:ro"
-      -v /tmp:/tmp
-      -w /usr/app/src
-      -e INTEGRATION_DATABASE_URL="$INTEGRATION_DATABASE_URL"
-      -e PYTHONPATH=/usr/app/src
-      "$CONTAINER_IMAGE" -m pytest '/tests' -k 'integration_' -v
+    - python -m pytest $CI_PROJECT_DIR/tests -k 'integration_' -v
 
 integration-postgres:
-  stage: test
-  image: docker:25
+  extends: .test-containerized
   services:
-    - docker:25-dind
     - name: postgres:16-alpine
       alias: postgres
-  needs:
-    - job: docker-build
-      artifacts: true
   variables:
-    DOCKER_TLS_CERTDIR: "/certs"
-    DOCKER_HOST: tcp://docker:2376
     POSTGRES_DB: postgres
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
+    INTEGRATION_DATABASE_URL: "postgresql+psycopg://postgres:postgres@postgres:5432/postgres"
   before_script:
-    - docker load -i container-image.tar
+    - pip install --no-cache-dir pytest -q
     - |
       # Wait for postgres to be ready
       for i in $(seq 1 60); do
-        if docker run --rm alpine:3 sh -c "apk add --no-cache postgresql-client >/dev/null 2>&1 && pg_isready -h postgres -p 5432 -U postgres" 2>/dev/null; then
+        if apk add --no-cache postgresql-client >/dev/null 2>&1 && pg_isready -h postgres -p 5432 -U postgres 2>/dev/null; then
           echo "Postgres is ready after $i attempt(s)."
           break
         fi
@@ -142,18 +116,7 @@ integration-postgres:
         sleep 1
       done
   script:
-    - |
-      # Run tests - the DATABASE_URL env var will be used by the test
-      # The test itself uses INTEGRATION_DATABASE_URL which is set to connect to postgres
-      docker run --rm --network host --entrypoint python \
-        -v "$CI_PROJECT_DIR/tests:/tests:ro" \
-        -w /usr/app/src \
-        -e INTEGRATION_DATABASE_URL="postgresql+psycopg://postgres:postgres@postgres:5432/postgres" \
-        -e PYTHONPATH=/usr/app/src \
-        "$CONTAINER_IMAGE" -m pytest '/tests' -k 'integration_' -v
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_COMMIT_BRANCH'
+    - python -m pytest $CI_PROJECT_DIR/tests -k 'integration_' -v
 
 docker-push:
   stage: push

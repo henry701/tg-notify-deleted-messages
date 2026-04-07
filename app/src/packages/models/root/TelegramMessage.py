@@ -24,7 +24,6 @@ class TelegramMessage(Base):
     edit_date = Column(
         TIMESTAMP(timezone=True),
         nullable=True,
-        primary_key=True,
     )
     chat_peer = relationship(
         TelegramPeer, lazy=False, cascade="all", foreign_keys=[chat_peer_id]

@@ -42,7 +42,11 @@ unit-tests:
     DATABASE_URL: "sqlite:///test.db"
     PYTHONPATH: "$CI_PROJECT_DIR/app/src"
   script:
+    - python --version
+    - pip --version
+    - pip list
     - pip install --cache-dir "$PIP_CACHE_DIR" -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt
+    - pip list
     - python -m unittest discover -s tests -p "test_*.py" -v
 
 integration-sqlite:

@@ -91,7 +91,7 @@ unit-tests:
       -w /usr/app/src
       -e DATABASE_URL="$DATABASE_URL"
       -e PYTHONPATH=/usr/app/src
-      "$CONTAINER_IMAGE" -m pytest '/tests' -k 'test_' -v
+      "$CONTAINER_IMAGE" -m pytest '/tests' --ignore='/tests/integration_db_backends.py' -v
 
 integration-sqlite:
   extends: .test-in-container
@@ -109,7 +109,7 @@ integration-sqlite:
       -w /usr/app/src
       -e INTEGRATION_DATABASE_URL="$INTEGRATION_DATABASE_URL"
       -e PYTHONPATH=/usr/app/src
-      "$CONTAINER_IMAGE" -m pytest '/tests' -k 'integration_' -v
+      "$CONTAINER_IMAGE" -m pytest '/tests/integration_db_backends.py' -v
 
 integration-postgres:
   stage: test

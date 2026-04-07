@@ -110,28 +110,23 @@ integration-postgres:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
     INTEGRATION_DATABASE_URL: "postgresql+psycopg://postgres:postgres@postgres:5432/postgres"
-  script:
+  before_script:
+    - docker load -i container-image.tar
     - |
-      python - <<'PY'
-      import os
-      import time
-      import sqlalchemy
-      from sqlalchemy import text
-
-      database_url = os.environ["INTEGRATION_DATABASE_URL"]
-      for attempt in range(60):
-          try:
-              engine = sqlalchemy.create_engine(database_url)
-              with engine.connect() as connection:
-                  connection.execute(text("SELECT 1"))
-              print(f"Postgres is ready after {attempt + 1} attempt(s).")
-              break
-          except Exception as exc:
-              if attempt == 59:
-                  raise RuntimeError(f"Postgres never became ready: {exc}") from exc
-              time.sleep(1)
-      PY
-    - docker run --rm --network "container:$(docker ps --filter name=postgres --format '{{.ID}}')" -v "$CI_PROJECT_DIR/tests:/tests:ro" -w /usr/app/src -e INTEGRATION_DATABASE_URL="$INTEGRATION_DATABASE_URL" -e PYTHONPATH=/usr/app/src "$CONTAINER_IMAGE" python -m unittest discover -s /tests -p "integration_*.py" -v
+      # Wait for postgres to be ready using pg_isready from postgres service
+      for i in $(seq 1 60); do
+        if docker run --rm --network host alpine:3 sh -c "apk add --no-cache postgresql-client >/dev/null 2>&1 && pg_isready -h postgres -p 5432 -U postgres"; then
+          echo "Postgres is ready after $i attempt(s)."
+          break
+        fi
+        if [ $i -eq 60 ]; then
+          echo "Postgres never became ready"
+          exit 1
+        fi
+        sleep 1
+      done
+  script:
+    - docker run --rm --network host -v "$CI_PROJECT_DIR/tests:/tests:ro" -w /usr/app/src -e INTEGRATION_DATABASE_URL="$INTEGRATION_DATABASE_URL" -e PYTHONPATH=/usr/app/src "$CONTAINER_IMAGE" python -m unittest discover -s /tests -p "integration_*.py" -v
 
 docker-push:
   stage: push

@@ -22,9 +22,7 @@ try:
     import cryptography
     from cryptography.hazmat.backends import default_backend
     from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.ciphers import (
-        Cipher, algorithms, modes
-    )
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
     from cryptography.fernet import Fernet
     from cryptography.exceptions import InvalidTag
 except ImportError:
@@ -51,7 +49,7 @@ class EncryptionDecryptionBaseEngine(object):
 
     def _update_key(self, key):
         if isinstance(key, six.string_types):
-            key = key.encode('utf-8')
+            key = key.encode("utf-8")
         digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
         digest.update(key)
         engine_key = digest.finalize()
@@ -59,10 +57,10 @@ class EncryptionDecryptionBaseEngine(object):
         self._initialize_engine(engine_key)
 
     def encrypt(self, value):
-        raise NotImplementedError('Subclasses must implement this!')
+        raise NotImplementedError("Subclasses must implement this!")
 
     def decrypt(self, value):
-        raise NotImplementedError('Subclasses must implement this!')
+        raise NotImplementedError("Subclasses must implement this!")
 
 
 class AesEngine(EncryptionDecryptionBaseEngine):
@@ -87,7 +85,7 @@ class AesEngine(EncryptionDecryptionBaseEngine):
         self.cipher = Cipher(
             algorithms.AES(self.secret_key),
             modes.CBC(self.iv),
-            backend=default_backend()
+            backend=default_backend(),
         )
 
     def _set_padding_mechanism(self, padding_mechanism=None):
@@ -101,7 +99,7 @@ class AesEngine(EncryptionDecryptionBaseEngine):
                 )
 
         if padding_mechanism is None:
-            padding_mechanism = 'naive'
+            padding_mechanism = "naive"
 
         padding_class = PADDING_MECHANISM[padding_mechanism]
         self.padding_engine = padding_class(self.BLOCK_SIZE)
@@ -112,7 +110,7 @@ class AesEngine(EncryptionDecryptionBaseEngine):
         encryptor = self.cipher.encryptor()
         encrypted = encryptor.update(value) + encryptor.finalize()
         encrypted = base64.b64encode(encrypted)
-        return encrypted.decode('ascii')
+        return encrypted.decode("ascii")
 
     def decrypt(self, value):
         if isinstance(value, six.text_type):
@@ -122,6 +120,7 @@ class AesEngine(EncryptionDecryptionBaseEngine):
         decrypted = decryptor.update(decrypted) + decryptor.finalize()
         decrypted = self.padding_engine.unpad(decrypted)
         return pickle.loads(decrypted)
+
 
 class AesGcmEngine(EncryptionDecryptionBaseEngine):
     """Provide AES/GCM encryption and decryption methods.
@@ -148,15 +147,13 @@ class AesGcmEngine(EncryptionDecryptionBaseEngine):
         value = pickle.dumps(value)
         iv = os.urandom(self.IV_BYTES_NEEDED)
         cipher = Cipher(
-            algorithms.AES(self.secret_key),
-            modes.GCM(iv),
-            backend=default_backend()
+            algorithms.AES(self.secret_key), modes.GCM(iv), backend=default_backend()
         )
         encryptor = cipher.encryptor()
         encrypted = encryptor.update(value) + encryptor.finalize()
         assert len(encryptor.tag) == self.TAG_SIZE_BYTES
         encrypted = base64.b64encode(iv + encryptor.tag + encrypted)
-        return encrypted.decode('ascii')
+        return encrypted.decode("ascii")
 
     def decrypt(self, value):
         if isinstance(value, six.text_type):
@@ -164,14 +161,15 @@ class AesGcmEngine(EncryptionDecryptionBaseEngine):
         decrypted = base64.b64decode(value)
         if len(decrypted) < self.IV_BYTES_NEEDED + self.TAG_SIZE_BYTES:
             raise InvalidCiphertextError()
-        iv = decrypted[:self.IV_BYTES_NEEDED]
-        tag = decrypted[self.IV_BYTES_NEEDED:
-                        self.IV_BYTES_NEEDED + self.TAG_SIZE_BYTES]
-        decrypted = decrypted[self.IV_BYTES_NEEDED + self.TAG_SIZE_BYTES:]
+        iv = decrypted[: self.IV_BYTES_NEEDED]
+        tag = decrypted[
+            self.IV_BYTES_NEEDED : self.IV_BYTES_NEEDED + self.TAG_SIZE_BYTES
+        ]
+        decrypted = decrypted[self.IV_BYTES_NEEDED + self.TAG_SIZE_BYTES :]
         cipher = Cipher(
             algorithms.AES(self.secret_key),
             modes.GCM(iv, tag),
-            backend=default_backend()
+            backend=default_backend(),
         )
         decryptor = cipher.decryptor()
         try:
@@ -191,12 +189,12 @@ class FernetEngine(EncryptionDecryptionBaseEngine):
     def encrypt(self, value):
         value = pickle.dumps(value)
         encrypted = self.fernet.encrypt(value)
-        return encrypted.decode('utf-8')
+        return encrypted.decode("utf-8")
 
     def decrypt(self, value):
         if isinstance(value, six.text_type):
             value = str(value)
-        decrypted = self.fernet.decrypt(value.encode('utf-8'))
+        decrypted = self.fernet.decrypt(value.encode("utf-8"))
         return pickle.loads(decrypted)
 
 
@@ -329,8 +327,7 @@ class StringEncryptedType(TypeDecorator, ScalarCoercible):
 
     impl = String
 
-    def __init__(self, type_in=None, key=None,
-                 engine=None, padding=None, **kwargs):
+    def __init__(self, type_in=None, key=None, engine=None, padding=None, **kwargs):
         """Initialization."""
         if not cryptography:
             raise ImproperlyConfigured(
@@ -368,9 +365,7 @@ class StringEncryptedType(TypeDecorator, ScalarCoercible):
             self._update_key()
 
             try:
-                value = self.underlying_type.process_bind_param(
-                    value, dialect
-                )
+                value = self.underlying_type.process_bind_param(value, dialect)
 
             except AttributeError:
                 # Doesn't have 'process_bind_param'
@@ -378,7 +373,7 @@ class StringEncryptedType(TypeDecorator, ScalarCoercible):
                 # Handle 'boolean' and 'dates'
                 type_ = self.underlying_type.python_type
                 if issubclass(type_, bool):
-                    value = 'true' if value else 'false'
+                    value = "true" if value else "false"
 
                 elif issubclass(type_, (datetime.date, datetime.time)):
                     value = value.isoformat()
@@ -408,15 +403,13 @@ class StringEncryptedType(TypeDecorator, ScalarCoercible):
                     return decrypted_value
 
                 if issubclass(type_, bool):
-                    return decrypted_value == 'true'
+                    return decrypted_value == "true"
 
                 # Handle 'boolean' and 'dates'
                 date_types = [datetime.datetime, datetime.time, datetime.date]
 
                 if type_ in date_types:
-                    return DatetimeHandler.process_value(
-                        decrypted_value, type_
-                    )
+                    return DatetimeHandler.process_value(decrypted_value, type_)
 
                 if issubclass(type_, JSONType):
                     return json.loads(decrypted_value)
@@ -439,18 +432,19 @@ class EncryptedType(StringEncryptedType):
             "The 'EncryptedType' class will change implementation from "
             "'LargeBinary' to 'String' in a future version. Use "
             "'StringEncryptedType' to use the 'String' implementation.",
-            DeprecationWarning)
+            DeprecationWarning,
+        )
         super().__init__(*args, **kwargs)
 
     def process_bind_param(self, value, dialect):
         value = super().process_bind_param(value=value, dialect=dialect)
         if isinstance(value, str):
-            value = value.encode('utf-8')
+            value = value.encode("utf-8")
         return value
 
     def process_result_value(self, value, dialect):
         if isinstance(value, bytes):
-            value = value.decode('utf-8')
+            value = value.decode("utf-8")
             value = super().process_result_value(value=value, dialect=dialect)
         return value
 

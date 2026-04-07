@@ -1,7 +1,8 @@
 # About
 
-`tg-notify-deleted-messages` allows you to track messages which were deleted by
-your interlocutors.
+`tg-notify-deleted-messages` allows you to track messages which were deleted or
+edited by your interlocutors. You receive notifications when messages are
+deleted or edited in monitored chats.
 
 ## Configuration
 
@@ -23,6 +24,12 @@ docker-compose stop app
 ```
 
 ## Run tests
+
+```bash
+PYTHONPATH=app/src python3 -m pytest tests/test_*.py -v
+```
+
+Or with unittest discover:
 
 ```bash
 PYTHONPATH=app/src python3 -m unittest discover -s tests -p "test_*.py" -v

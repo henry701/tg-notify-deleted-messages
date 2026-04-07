@@ -30,8 +30,10 @@ default:
 .python-test-job:
   stage: test
   before_script:
+    - apt-get update && apt-get install -y --no-install-recommends git
     - python --version
-    - pip install --upgrade pip
+    - pip install --upgrade pip setuptools wheel
+    - pip install --no-cache-dir git+https://github.com/henry701/telethon-session-sqlalchemy@12615470b54e75055d2bc1d73d56b13ca41a1875
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH'

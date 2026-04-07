@@ -75,7 +75,9 @@ def get_default_notify_message_edit() -> Callable[
         message: TelegramMessage, client: TelegramClient
     ):
         await client.send_message(
-            entity="me",
+            entity=message.chat_peer.to_telethon_input_peer()
+            if message.chat_peer
+            else "me",
             message="**Edited message** from: [{}](tg://user?id={}) on chat [{}](tg://chat?id={})\n**New Text:** {}".format(
                 (await get_mention_text(client, message.from_peer))
                 if message.from_peer

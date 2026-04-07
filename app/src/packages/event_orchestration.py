@@ -281,6 +281,12 @@ def get_on_message_edited(
                             else "(no query)",
                         )
                     )
+                    if event.message is not None:
+                        msg_text = getattr(event.message, "text", None)
+                        if msg_text:
+                            logger.log(
+                                5, f"Edited message text (not found in DB): {msg_text}"
+                            )
                 except Exception as e:
                     logger.error(
                         f"Error while logging missing edited message (has {db_messages_count_str} of {edited_messages_count_str}, with {filtered_away_messages_count_str} filtered away): {e}",
@@ -441,7 +447,7 @@ async def add_event_handlers(
     gather_with_concurrency_func: Callable,
 ):
     logger.info("Adding event handlers")
-    new_message_event = events.NewMessage(incoming=True, outgoing=True)
+    new_message_event = events.NewMessage()
     new_message_handler = get_on_new_message(
         sqlalchemy_session_maker=sqlalchemy_session_maker, client=client
     )

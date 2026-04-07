@@ -511,6 +511,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         event_mock = AsyncMock()
         event_mock.message_id = 1
         event_mock.get_input_chat = AsyncMock(return_value=None)
+        event_mock.message = None
 
         with patch(
             "packages.event_orchestration.load_messages_by_parameters",
@@ -526,8 +527,8 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
             )
             await handler(event_mock)
 
-            gather_func.assert_called_once()
-            notify_edit.assert_called_once_with(mock_message, client_mock)
+        gather_func.assert_called_once()
+        notify_edit.assert_called_once_with(mock_message, client_mock)
 
     @patch.dict(
         "os.environ",
@@ -557,6 +558,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         event_mock = AsyncMock()
         event_mock.message_id = 1
         event_mock.get_input_chat = AsyncMock(return_value=None)
+        event_mock.message = None
 
         with patch(
             "packages.event_orchestration.load_messages_by_parameters",
@@ -572,8 +574,8 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
             )
             await handler(event_mock)
 
-            notify_edit.assert_not_called()
-            gather_func.assert_not_called()
+        notify_edit.assert_not_called()
+        gather_func.assert_not_called()
 
 
 class GetMessageMediaBlobThresholdTests(unittest.IsolatedAsyncioTestCase):

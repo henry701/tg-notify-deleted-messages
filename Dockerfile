@@ -78,6 +78,7 @@ COPY --link --from=python-runtime /python-runtime/. /python-runtime/.
 ENV PATH="/python-runtime/bin:${PATH}"
 RUN /bin/bash /python-runtime/re_prepare.sh
 RUN pip3 install --no-cache setuptools wheel pycparser
+RUN pip3 install --no-cache pytest
 RUN mkdir -p /usr/app/meta/requirements/
 RUN --mount=type=bind,source=./app/meta/requirements/base.txt,target=/usr/app/meta/requirements/base.txt pip3 install --no-cache -r /usr/app/meta/requirements/base.txt
 RUN --mount=type=bind,source=./app/meta/requirements/db_cripto.txt,target=/usr/app/meta/requirements/db_cripto.txt pip3 install --no-cache -r /usr/app/meta/requirements/db_cripto.txt

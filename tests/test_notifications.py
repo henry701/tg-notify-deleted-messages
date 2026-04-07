@@ -131,7 +131,9 @@ class NotificationsTests(unittest.IsolatedAsyncioTestCase):
 
         mock_client.send_message.assert_called_once()
         call_args = mock_client.send_message.call_args
-        self.assertEqual(call_args.kwargs["entity"], "me")
+        self.assertEqual(
+            call_args.kwargs["entity"], mock_from_peer.to_telethon_input_peer()
+        )
         self.assertIn("Edited message", call_args.kwargs["message"])
         self.assertIn("TestUser", call_args.kwargs["message"])
         self.assertIn("TestChat", call_args.kwargs["message"])

@@ -142,22 +142,14 @@ integration-postgres:
         fi
         sleep 1
       done
-    - |
-      # Get postgres container IP address
-      # The postgres service is linked to this job container
-      POSTGRES_IP=$(getent hosts postgres | awk '{ print $1 }')
-      echo "Postgres IP: $POSTGRES_IP"
-      echo "export POSTGRES_IP=$POSTGRES_IP" > /tmp/postgres_env.sh
   script:
     - |
-      . /tmp/postgres_env.sh
-      echo "Running tests against Postgres at $POSTGRES_IP:5432"
-      
-      # Use --add-host to inject postgres hostname into inner container
-      docker run --rm --network host --add-host postgres:$POSTGRES_IP --entrypoint python \
+      # Use --network container:postgres to share postgres container's network
+      # In this mode, localhost:5432 in the inner container connects to postgres
+      docker run --rm --network container:postgres --entrypoint python \
         -v "$CI_PROJECT_DIR/tests:/tests:ro" \
         -w /usr/app/src \
-        -e INTEGRATION_DATABASE_URL="postgresql+psycopg://postgres:postgres@postgres:5432/postgres" \
+        -e INTEGRATION_DATABASE_URL="postgresql+psycopg://postgres:postgres@localhost:5432/postgres" \
         -e PYTHONPATH=/usr/app/src \
         "$CONTAINER_IMAGE" -m pytest '/tests' -k 'integration_' -v
   rules:

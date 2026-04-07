@@ -420,7 +420,7 @@ async def add_event_handlers(
     gather_with_concurrency_func: Callable,
 ):
     logger.info("Adding event handlers")
-    new_message_event = events.NewMessage(incoming=True, outgoing=True)
+    new_message_event = events.NewMessage()
     client.add_event_handler(
         get_on_new_message(
             sqlalchemy_session_maker=sqlalchemy_session_maker, client=client

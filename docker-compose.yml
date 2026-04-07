@@ -10,6 +10,7 @@ services:
     stdin_open: true
     tty: true
     environment:
+      TZ: UTC
       DATABASE_URL: postgresql+psycopg://postgres:postgres@db/postgres
       #DATABASE_URL: sqlite:///file:/usr/app/state/db.sqlite3?uri=true
       PORT: 8085

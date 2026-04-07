@@ -152,7 +152,7 @@ integration-postgres:
         -w /usr/app/src \
         -e INTEGRATION_DATABASE_URL="postgresql+psycopg://postgres:postgres@postgres:5432/postgres" \
         -e PYTHONPATH=/usr/app/src \
-        "$CONTAINER_IMAGE" -m pytest '/tests' -k 'integration_' -v
+        "$CONTAINER_IMAGE" -m pytest '/tests/integration_db_backends.py' -v
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH'

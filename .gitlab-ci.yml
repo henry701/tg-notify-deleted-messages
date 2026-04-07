@@ -40,9 +40,11 @@ unit-tests:
   extends: .python-test-job
   variables:
     DATABASE_URL: "sqlite:///test.db"
-    PYTHONPATH: "$CI_PROJECT_DIR/app/src"
   script:
+    - echo "Python: $(python --version)"
+    - echo "PYTHONPATH: $PYTHONPATH"
     - pip install --cache-dir "$PIP_CACHE_DIR" -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt
+    - pip install pytest
     - python -m pytest tests/test_*.py -v --tb=short
 
 integration-sqlite:

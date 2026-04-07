@@ -44,9 +44,10 @@ unit-tests:
   before_script:
     - python --version
     - pip install --upgrade pip setuptools wheel
-    - pip install --no-cache-dir --break-system-packages -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt
+    - pip install --no-cache-dir alchemysession
   script:
     - export PYTHONPATH="$CI_PROJECT_DIR/app/src"
+    - pip install --no-cache-dir -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt
     - python -m unittest discover -s tests -p "test_*.py" -v
 
 integration-sqlite:

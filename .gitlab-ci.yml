@@ -41,9 +41,12 @@ unit-tests:
   variables:
     DATABASE_URL: "sqlite:///test.db"
   cache: {}
+  before_script:
+    - python --version
+    - pip install --upgrade pip
+    - pip install --upgrade setuptools wheel
   script:
     - export PYTHONPATH="$CI_PROJECT_DIR/app/src"
-    - python --version
     - pip install -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt
     - python -m unittest discover -s tests -p "test_*.py" -v
 

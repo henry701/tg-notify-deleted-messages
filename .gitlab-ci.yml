@@ -41,21 +41,21 @@ unit-tests:
   variables:
     DATABASE_URL: "sqlite:///test.db"
     PYTHONPATH: "$CI_PROJECT_DIR/app/src"
+  cache: {}
   script:
-    - python --version
-    - pip --version
-    - pip list
-    - pip install --cache-dir "$PIP_CACHE_DIR" -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt
-    - pip list
+    - pip install --upgrade pip
+    - pip install -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt
     - python -m unittest discover -s tests -p "test_*.py" -v
 
 integration-sqlite:
   extends: .python-test-job
   variables:
     INTEGRATION_DATABASE_URL: "sqlite+pysqlite:////tmp/tgdel-integration.sqlite3"
+  cache: {}
   script:
     - rm -f /tmp/tgdel-integration.sqlite3
-    - pip install --cache-dir "$PIP_CACHE_DIR" -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt
+    - pip install --upgrade pip
+    - pip install -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt
     - python -m unittest discover -s tests -p "integration_*.py" -v
 
 integration-postgres:
@@ -68,11 +68,13 @@ integration-postgres:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
     INTEGRATION_DATABASE_URL: "postgresql+psycopg://postgres:postgres@postgres:5432/postgres"
+  cache: {}
   script:
     - apt-get update
     - apt-get install -y --no-install-recommends libpq5
     - rm -rf /var/lib/apt/lists/*
-    - pip install --cache-dir "$PIP_CACHE_DIR" -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt -r app/meta/requirements/pgsql-psycopg3.txt
+    - pip install --upgrade pip
+    - pip install -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt -r app/meta/requirements/pgsql-psycopg3.txt
     - |
       python - <<'PY'
       import os

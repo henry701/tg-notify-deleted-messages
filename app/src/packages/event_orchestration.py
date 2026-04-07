@@ -215,80 +215,95 @@ def get_on_message_edited(
         stop=stop_after_attempt(3),
     )
     async def on_message_edited(event: MessageEdited.Event):
-        edited_messages_count = 1
-
-        if edited_messages_count == 0:
-            logger.debug("Got empty edited message event. Returning early!")
-            return
-
-        chat = None
         try:
-            input_chat = await event.get_input_chat()
-            chat = await client.get_entity(input_chat) if input_chat else None
-        except ValueError:
-            pass
+            message_id = None
+            if event.message is not None:
+                message_id = event.message.id
+            elif hasattr(event, "message_id") and event.message_id is not None:
+                message_id = event.message_id
+            else:
+                logger.debug("Got empty message in edited event. Returning early!")
+                return
 
-        with sqlalchemy_session_maker.begin() as sqlalchemy_session:
-            (
-                messages,
-                query,
-                unloaded_ids,
-                filtered_away_ids,
-            ) = await load_messages_by_parameters(
-                [event.message_id],
-                chat,
-                client,
-                sqlalchemy_session,
-                ignore_channels,
-                ignore_groups,
-                ignore_megagroups,
-                ignore_gigagroups,
-                member_ignore_threshold,
-                should_notify_outgoing_messages,
-            )
+            edited_messages_count = 1
 
-        edited_messages_count_str = str(edited_messages_count)
-        db_messages_count = len(messages)
-        db_messages_count_str = str(db_messages_count)
-        filtered_away_messages_count = len(filtered_away_ids)
-        filtered_away_messages_count_str = str(filtered_away_messages_count)
+            if edited_messages_count == 0:
+                logger.debug("Got empty edited message event. Returning early!")
+                return
 
-        logger.info(
-            f"Got {edited_messages_count_str} edited message. Has matching in DB: {db_messages_count_str}. Filtered away: {filtered_away_messages_count_str}"
-        )
-
-        if edited_messages_count > db_messages_count + filtered_away_messages_count:
+            chat = None
             try:
-                logger.warning(
-                    "Got {edited_messages_count} edited messages but only found {db_messages_count} (with {filtered_away_messages_count} filtered away) matching in database! Query: {query_str}".format(
-                        edited_messages_count=edited_messages_count_str,
-                        db_messages_count=db_messages_count_str,
-                        filtered_away_messages_count=filtered_away_messages_count_str,
-                        query_str=str(
-                            query.compile(compile_kwargs={"literal_binds": True})
-                        )
-                        if query is not None
-                        else "(no query)",
-                    )
-                )
-            except Exception as e:
-                logger.error(
-                    f"Error while logging missing edited message (has {db_messages_count_str} of {edited_messages_count_str}, with {filtered_away_messages_count_str} filtered away): {e}",
-                    exc_info=True,
+                input_chat = await event.get_input_chat()
+                chat = await client.get_entity(input_chat) if input_chat else None
+            except ValueError:
+                pass
+
+            with sqlalchemy_session_maker.begin() as sqlalchemy_session:
+                (
+                    messages,
+                    query,
+                    unloaded_ids,
+                    filtered_away_ids,
+                ) = await load_messages_by_parameters(
+                    [message_id],
+                    chat,
+                    client,
+                    sqlalchemy_session,
+                    ignore_channels,
+                    ignore_groups,
+                    ignore_megagroups,
+                    ignore_gigagroups,
+                    member_ignore_threshold,
+                    should_notify_outgoing_messages,
                 )
 
-        awaitables: list[Awaitable[Any]] = []
-        for message in messages:
-            awaitables.append(notify_message_edit(message, client))
-        if unloaded_ids and len(unloaded_ids):
-            pass
-        if len(awaitables) > 0:
-            await gather_with_concurrency_func(
-                edited_messages_notification_concurrency, *awaitables
+            edited_messages_count_str = str(edited_messages_count)
+            db_messages_count = len(messages)
+            db_messages_count_str = str(db_messages_count)
+            filtered_away_messages_count = len(filtered_away_ids)
+            filtered_away_messages_count_str = str(filtered_away_messages_count)
+
+            logger.info(
+                f"Got {edited_messages_count_str} edited message. Has matching in DB: {db_messages_count_str}. Filtered away: {filtered_away_messages_count_str}"
             )
 
-        if hasattr(event, "message") and event.message:
-            await store_message_for_edit(event.message, check_chat=False)
+            if edited_messages_count > db_messages_count + filtered_away_messages_count:
+                try:
+                    logger.warning(
+                        "Got {edited_messages_count} edited messages but only found {db_messages_count} (with {filtered_away_messages_count} filtered away) matching in database! Query: {query_str}".format(
+                            edited_messages_count=edited_messages_count_str,
+                            db_messages_count=db_messages_count_str,
+                            filtered_away_messages_count=filtered_away_messages_count_str,
+                            query_str=str(
+                                query.compile(compile_kwargs={"literal_binds": True})
+                            )
+                            if query is not None
+                            else "(no query)",
+                        )
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Error while logging missing edited message (has {db_messages_count_str} of {edited_messages_count_str}, with {filtered_away_messages_count_str} filtered away): {e}",
+                        exc_info=True,
+                    )
+
+            awaitables: list[Awaitable[Any]] = []
+            for message in messages:
+                awaitables.append(notify_message_edit(message, client))
+            if unloaded_ids and len(unloaded_ids):
+                pass
+            if len(awaitables) > 0:
+                await gather_with_concurrency_func(
+                    edited_messages_notification_concurrency, *awaitables
+                )
+
+            if hasattr(event, "message") and event.message:
+                await store_message_for_edit(event.message, check_chat=False)
+        except Exception as e:
+            logger.error(
+                f"Error in on_message_edited handler: {e}",
+                exc_info=True,
+            )
 
     return on_message_edited
 

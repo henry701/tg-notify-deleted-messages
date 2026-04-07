@@ -373,7 +373,6 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
             if existing:
                 existing.text = message.message
                 existing.media = blob
-                existing.timestamp = message.date
                 existing.edit_date = message.date
                 orm_message = existing
             else:

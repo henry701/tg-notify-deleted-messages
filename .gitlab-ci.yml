@@ -84,17 +84,13 @@ unit-tests:
   variables:
     DATABASE_URL: "sqlite:///test.db"
   script:
-    - |
-      docker run --rm --network host --entrypoint sh \
-        -v "$CI_PROJECT_DIR/tests:/tests:ro" \
-        -w /usr/app/src \
-        -e DATABASE_URL="$DATABASE_URL" \
-        -e PYTHONPATH=/usr/app/src \
-        "$CONTAINER_IMAGE" -c "
-          apk add --no-cache py3-pip && \
-          pip3 install --no-cache-dir pytest && \
-          python3 -m pytest /tests/test_*.py -v
-        "
+    - >
+      docker run --rm --network host --entrypoint python
+      -v "$CI_PROJECT_DIR/tests:/tests:ro"
+      -w /usr/app/src
+      -e DATABASE_URL="$DATABASE_URL"
+      -e PYTHONPATH=/usr/app/src
+      "$CONTAINER_IMAGE" -m pytest /tests/test_*.py -v
 
 integration-sqlite:
   extends: .test-base
@@ -103,58 +99,59 @@ integration-sqlite:
       artifacts: true
   variables:
     INTEGRATION_DATABASE_URL: "sqlite+pysqlite:////tmp/tgdel-integration.sqlite3"
-  before_script:
-    - docker load -i container-image.tar
   script:
     - rm -f /tmp/tgdel-integration.sqlite3
-    - |
-      docker run --rm --network host --entrypoint sh \
-        -v "$CI_PROJECT_DIR/tests:/tests:ro" \
-        -v /tmp:/tmp \
-        -w /usr/app/src \
-        -e INTEGRATION_DATABASE_URL="$INTEGRATION_DATABASE_URL" \
-        -e PYTHONPATH=/usr/app/src \
-        "$CONTAINER_IMAGE" -c "
-          python3 -m ensurepip --upgrade && \
-          pip3 install --no-cache-dir pytest && \
-          python3 -m pytest /tests/integration_*.py -v
-        "
+    - >
+      docker run --rm --network host --entrypoint python
+      -v "$CI_PROJECT_DIR/tests:/tests:ro"
+      -v /tmp:/tmp
+      -w /usr/app/src
+      -e INTEGRATION_DATABASE_URL="$INTEGRATION_DATABASE_URL"
+      -e PYTHONPATH=/usr/app/src
+      "$CONTAINER_IMAGE" -m pytest /tests/integration_*.py -v
 
 integration-postgres:
-  extends: .test-base
+  stage: test
+  image: docker:25
+  services:
+    - docker:25-dind
+    - name: postgres:16-alpine
+      alias: postgres
   needs:
     - job: docker-build
       artifacts: true
-  services:
-    - name: postgres:16-alpine
-      alias: postgres
   variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_HOST: tcp://docker:2376
     POSTGRES_DB: postgres
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
     INTEGRATION_DATABASE_URL: "postgresql+psycopg://postgres:postgres@postgres:5432/postgres"
   before_script:
     - docker load -i container-image.tar
-    - |
-      # Wait for postgres to be ready using pg_isready from postgres service
+    - >
       for i in $(seq 1 60); do
         if docker run --rm --network host alpine:3 sh -c "apk add --no-cache postgresql-client >/dev/null 2>&1 && pg_isready -h postgres -p 5432 -U postgres"; then
           echo "Postgres is ready after $i attempt(s)."
           break
         fi
-        if [ $i -eq 60 ]; then
+        if [ "$i" -eq 60 ]; then
           echo "Postgres never became ready"
           exit 1
         fi
         sleep 1
       done
   script:
-    - |
-      docker run --rm --entrypoint sh --network host -v "$CI_PROJECT_DIR/tests:/tests:ro" -w /usr/app/src -e INTEGRATION_DATABASE_URL="$INTEGRATION_DATABASE_URL" -e PYTHONPATH=/usr/app/src "$CONTAINER_IMAGE" -c "
-        python3 -m ensurepip --upgrade && \
-        pip3 install --no-cache-dir pytest && \
-        python3 -m pytest /tests/integration_*.py -v
-      "
+    - >
+      docker run --rm --network host --entrypoint python
+      -v "$CI_PROJECT_DIR/tests:/tests:ro"
+      -w /usr/app/src
+      -e INTEGRATION_DATABASE_URL="$INTEGRATION_DATABASE_URL"
+      -e PYTHONPATH=/usr/app/src
+      "$CONTAINER_IMAGE" -m pytest /tests/integration_*.py -v
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
 
 docker-push:
   stage: push

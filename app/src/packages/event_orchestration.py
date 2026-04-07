@@ -202,18 +202,19 @@ def get_on_message_edited(
         os.getenv("EDITED_MESSAGES_NOTIFICATION_CONCURRENCY", "1")
     )
 
+    store_message_for_edit = get_store_message(sqlalchemy_session_maker, client)
+
     @retry(
         retry=retry_if_exception_type((IOError, sqlalchemy.exc.DBAPIError)),
         stop=stop_after_attempt(3),
     )
     async def on_message_edited(event: MessageEdited.Event):
-        edited_messages_count = 1  # MessageEdited events only contain one message
+        edited_messages_count = 1
 
         if edited_messages_count == 0:
             logger.debug("Got empty edited message event. Returning early!")
             return
 
-        # Try to get the chat from the event
         chat = None
         try:
             input_chat = await event.get_input_chat()
@@ -221,7 +222,6 @@ def get_on_message_edited(
         except ValueError:
             pass
 
-        # Load the message from database with the current version
         with sqlalchemy_session_maker.begin() as sqlalchemy_session:
             (
                 messages,
@@ -275,13 +275,14 @@ def get_on_message_edited(
         for message in messages:
             awaitables.append(notify_message_edit(message, client))
         if unloaded_ids and len(unloaded_ids):
-            # For edited messages, we might want to notify about unloaded messages differently
-            # For now, we'll skip notification for unloaded edited messages
             pass
         if len(awaitables) > 0:
             await gather_with_concurrency_func(
                 edited_messages_notification_concurrency, *awaitables
             )
+
+        if hasattr(event, "message") and event.message:
+            await store_message_for_edit(event.message, check_chat=False)
 
     return on_message_edited
 
@@ -357,35 +358,19 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
             message.peer_id, client, sqlalchemy_session_maker
         )
         blob = await get_message_media_blob(message)
-        built_chat_peer_id = getattr(built_chat_peer, "id", None)
-        with sqlalchemy_session_maker.begin() as sqlalchemy_session:
-            existing = None
-            if built_chat_peer_id is not None:
-                existing = (
-                    sqlalchemy_session.query(TelegramMessage)
-                    .filter(
-                        TelegramMessage.id == message.id,
-                        TelegramMessage.chat_peer_id == built_chat_peer_id,
-                    )
-                    .first()
-                )
 
-            if existing:
-                existing.text = message.message
-                existing.media = blob
-                existing.timestamp = message.date
-                existing.edit_date = message.date
-                orm_message = existing
-            else:
-                orm_message = TelegramMessage(
-                    id=message.id,
-                    from_peer=built_from_peer,
-                    chat_peer=built_chat_peer,
-                    text=message.message,
-                    media=blob,
-                    timestamp=message.date,
-                    edit_date=message.date,
-                )
+        edit_date = getattr(message, "edit_date", None) or message.date
+        orm_message = TelegramMessage(
+            id=message.id,
+            from_peer=built_from_peer,
+            chat_peer=built_chat_peer,
+            text=message.message,
+            media=blob,
+            timestamp=message.date,
+            edit_date=edit_date,
+        )
+
+        with sqlalchemy_session_maker.begin() as sqlalchemy_session:
             sqlalchemy_session.merge(orm_message)
             return True
 

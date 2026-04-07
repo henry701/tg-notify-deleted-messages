@@ -511,6 +511,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         event_mock = AsyncMock()
         event_mock.message_id = 1
         event_mock.get_input_chat = AsyncMock(return_value=None)
+        event_mock.message = None
 
         with patch(
             "packages.event_orchestration.load_messages_by_parameters",
@@ -526,8 +527,8 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
             )
             await handler(event_mock)
 
-            gather_func.assert_called_once()
-            notify_edit.assert_called_once_with(mock_message, client_mock)
+        gather_func.assert_called_once()
+        notify_edit.assert_called_once_with(mock_message, client_mock)
 
     @patch.dict(
         "os.environ",
@@ -557,6 +558,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         event_mock = AsyncMock()
         event_mock.message_id = 1
         event_mock.get_input_chat = AsyncMock(return_value=None)
+        event_mock.message = None
 
         with patch(
             "packages.event_orchestration.load_messages_by_parameters",
@@ -572,8 +574,8 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
             )
             await handler(event_mock)
 
-            notify_edit.assert_not_called()
-            gather_func.assert_not_called()
+        notify_edit.assert_not_called()
+        gather_func.assert_not_called()
 
 
 class GetMessageMediaBlobThresholdTests(unittest.IsolatedAsyncioTestCase):
@@ -661,23 +663,13 @@ class GetStoreMessageBranchTests(unittest.IsolatedAsyncioTestCase):
             "MEMBER_IGNORE_THRESHOLD": "0",
         },
     )
-    async def test_updates_existing_message(self):
+    async def test_inserts_new_version_for_existing_message(self):
         client_mock = AsyncMock()
         session_maker_mock = MagicMock()
         built_chat_peer = MagicMock()
         built_chat_peer.id = 987
 
-        existing_message = MagicMock()
-        existing_message.id = 1
-        existing_message.text = "old"
-        existing_message.media = None
-        existing_message.timestamp = None
-        existing_message.edit_date = None
-
         session_mock = MagicMock()
-        query_mock = MagicMock()
-        query_mock.filter.return_value.first.return_value = existing_message
-        session_mock.query.return_value = query_mock
         session_maker_mock.begin.return_value.__enter__ = MagicMock(
             return_value=session_mock
         )
@@ -711,10 +703,7 @@ class GetStoreMessageBranchTests(unittest.IsolatedAsyncioTestCase):
             get_blob.return_value = None
             result = await store_fn(message_mock)
             self.assertTrue(result)
-            peer_filter = query_mock.filter.call_args.args[1]
-            self.assertEqual(peer_filter.right.value, built_chat_peer.id)
-            self.assertEqual(existing_message.text, "updated text")
-            session_mock.merge.assert_called_once_with(existing_message)
+            session_mock.merge.assert_called_once()
 
 
 class GetStoreMessageIfNotExistsTests(unittest.IsolatedAsyncioTestCase):

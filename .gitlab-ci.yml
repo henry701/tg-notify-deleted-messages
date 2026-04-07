@@ -43,9 +43,12 @@ unit-tests:
     PYTHONPATH: "$CI_PROJECT_DIR/app/src"
   cache: {}
   script:
-    - pip install --upgrade pip
-    - pip install -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt
-    - python -m unittest discover -s tests -p "test_*.py" -v
+    - |
+      python --version
+      pip --version
+      python -c "import sys; print(f'Python path: {sys.executable}')"
+      python -c "import packages; print('Import success')" || echo "Import failed"
+      python -c "import unittest; loader = unittest.TestLoader(); suite = loader.discover('tests', 'test_*.py'); runner = unittest.TextTestRunner(verbosity=2); result = runner.run(suite); sys.exit(0 if result.wasSuccessful() else 1)"
 
 integration-sqlite:
   extends: .python-test-job

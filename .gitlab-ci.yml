@@ -85,11 +85,16 @@ unit-tests:
     DATABASE_URL: "sqlite:///test.db"
   script:
     - |
-      docker run --rm --entrypoint sh -v "$CI_PROJECT_DIR/tests:/tests:ro" -w /usr/app/src -e DATABASE_URL="$DATABASE_URL" -e PYTHONPATH=/usr/app/src "$CONTAINER_IMAGE" -c "
-        python3 -m ensurepip --upgrade && \
-        pip3 install --no-cache-dir pytest && \
-        python3 -m pytest /tests/test_*.py -v
-      "
+      docker run --rm --network host --entrypoint sh \
+        -v "$CI_PROJECT_DIR/tests:/tests:ro" \
+        -w /usr/app/src \
+        -e DATABASE_URL="$DATABASE_URL" \
+        -e PYTHONPATH=/usr/app/src \
+        "$CONTAINER_IMAGE" -c "
+          apk add --no-cache py3-pip && \
+          pip3 install --no-cache-dir pytest && \
+          python3 -m pytest /tests/test_*.py -v
+        "
 
 integration-sqlite:
   extends: .test-base
@@ -98,14 +103,22 @@ integration-sqlite:
       artifacts: true
   variables:
     INTEGRATION_DATABASE_URL: "sqlite+pysqlite:////tmp/tgdel-integration.sqlite3"
+  before_script:
+    - docker load -i container-image.tar
   script:
     - rm -f /tmp/tgdel-integration.sqlite3
     - |
-      docker run --rm --entrypoint sh -v "$CI_PROJECT_DIR/tests:/tests:ro" -v /tmp:/tmp -w /usr/app/src -e INTEGRATION_DATABASE_URL="$INTEGRATION_DATABASE_URL" -e PYTHONPATH=/usr/app/src "$CONTAINER_IMAGE" -c "
-        python3 -m ensurepip --upgrade && \
-        pip3 install --no-cache-dir pytest && \
-        python3 -m pytest /tests/integration_*.py -v
-      "
+      docker run --rm --network host --entrypoint sh \
+        -v "$CI_PROJECT_DIR/tests:/tests:ro" \
+        -v /tmp:/tmp \
+        -w /usr/app/src \
+        -e INTEGRATION_DATABASE_URL="$INTEGRATION_DATABASE_URL" \
+        -e PYTHONPATH=/usr/app/src \
+        "$CONTAINER_IMAGE" -c "
+          python3 -m ensurepip --upgrade && \
+          pip3 install --no-cache-dir pytest && \
+          python3 -m pytest /tests/integration_*.py -v
+        "
 
 integration-postgres:
   extends: .test-base

@@ -129,9 +129,10 @@ integration-postgres:
     INTEGRATION_DATABASE_URL: "postgresql+psycopg://postgres:postgres@postgres:5432/postgres"
   before_script:
     - docker load -i container-image.tar
-    - >
+    - |
+      # Wait for postgres to be ready (it's available at 'postgres' hostname in this job's network)
       for i in $(seq 1 60); do
-        if docker run --rm --network host alpine:3 sh -c "apk add --no-cache postgresql-client >/dev/null 2>&1 && pg_isready -h postgres -p 5432 -U postgres"; then
+        if docker run --rm alpine:3 sh -c "apk add --no-cache postgresql-client >/dev/null 2>&1 && pg_isready -h postgres -p 5432 -U postgres" 2>/dev/null; then
           echo "Postgres is ready after $i attempt(s)."
           break
         fi
@@ -141,14 +142,21 @@ integration-postgres:
         fi
         sleep 1
       done
+    - |
+      # Get postgres container IP for the test container to use
+      POSTGRES_IP=$(getent hosts postgres | awk '{ print $1 }')
+      echo "Postgres IP: $POSTGRES_IP"
+      echo "export POSTGRES_IP=$POSTGRES_IP" > /tmp/postgres_env.sh
   script:
-    - >
-      docker run --rm --network host --entrypoint python
-      -v "$CI_PROJECT_DIR/tests:/tests:ro"
-      -w /usr/app/src
-      -e INTEGRATION_DATABASE_URL="$INTEGRATION_DATABASE_URL"
-      -e PYTHONPATH=/usr/app/src
-      "$CONTAINER_IMAGE" -m pytest '/tests' -k 'integration_' -v
+    - |
+      . /tmp/postgres_env.sh
+      # Use postgres IP directly since DinD containers can't resolve the hostname
+      docker run --rm --add-host=postgres:$POSTGRES_IP --entrypoint python \
+        -v "$CI_PROJECT_DIR/tests:/tests:ro" \
+        -w /usr/app/src \
+        -e INTEGRATION_DATABASE_URL="$INTEGRATION_DATABASE_URL" \
+        -e PYTHONPATH=/usr/app/src \
+        "$CONTAINER_IMAGE" -m pytest '/tests' -k 'integration_' -v
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH'

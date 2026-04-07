@@ -40,26 +40,18 @@ unit-tests:
   extends: .python-test-job
   variables:
     DATABASE_URL: "sqlite:///test.db"
-  cache:
-    key: pip-unit-$CI_COMMIT_REF_SLUG
-    paths:
-      - .pip-cache/
   script:
-    - pip install --cache-dir "$PIP_CACHE_DIR" -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt -r requirements-dev.txt
-    - python -m pytest tests/test_*.py -v
+    - pip install --cache-dir "$PIP_CACHE_DIR" -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt
+    - python -m unittest discover -s tests -p "test_*.py" -v
 
 integration-sqlite:
   extends: .python-test-job
   variables:
     INTEGRATION_DATABASE_URL: "sqlite+pysqlite:////tmp/tgdel-integration.sqlite3"
-  cache:
-    key: pip-int-$CI_COMMIT_REF_SLUG
-    paths:
-      - .pip-cache/
   script:
     - rm -f /tmp/tgdel-integration.sqlite3
-    - pip install --cache-dir "$PIP_CACHE_DIR" -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt -r requirements-dev.txt
-    - python -m pytest tests/test_*.py -v --tb=short
+    - pip install --cache-dir "$PIP_CACHE_DIR" -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt
+    - python -m unittest discover -s tests -p "integration_*.py" -v
 
 integration-postgres:
   extends: .python-test-job

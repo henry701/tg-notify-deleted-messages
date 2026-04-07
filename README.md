@@ -69,3 +69,4 @@ See [ROADMAP.md](./ROADMAP.md).
 
 Feel free to create issues, bug reports and pull requests. I will be very
 grateful if someone implements any of the features described in the roadmap!
+# CI trigger

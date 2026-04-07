@@ -78,8 +78,8 @@ class DatabaseBackendsIntegrationTests(unittest.TestCase):
             conn.execute(
                 text(
                     "INSERT INTO telegram_messages "
-                    "(id, chat_peer_id, from_peer_id, text, media, timestamp, deleted) "
-                    "VALUES (:id, :chat_peer_id, :from_peer_id, :message_text, :media, :timestamp, :deleted)"
+                    "(id, chat_peer_id, from_peer_id, text, media, timestamp, edit_date, deleted) "
+                    "VALUES (:id, :chat_peer_id, :from_peer_id, :message_text, :media, :timestamp, :edit_date, :deleted)"
                 ),
                 {
                     "id": message_id,
@@ -88,6 +88,7 @@ class DatabaseBackendsIntegrationTests(unittest.TestCase):
                     "message_text": message_text,
                     "media": None,
                     "timestamp": message_timestamp,
+                    "edit_date": message_timestamp,
                     "deleted": deleted,
                 },
             )

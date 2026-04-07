@@ -34,6 +34,12 @@ from packages.notifications import (
     get_default_notify_message_edit,
     get_default_notify_unknown_message,
 )
+from packages.restart_manager import (
+    get_inactivity_hours_from_env,
+    get_restart_cron_from_env,
+    inactivity_restart_loop,
+    scheduled_restart_loop,
+)
 
 logger = logging.getLogger("tgdel-bootstrap")
 
@@ -229,16 +235,33 @@ async def client_main_loop_job(
             stop_event=stop_event,
         )
     )
+    scheduled_restart_task = asyncio.create_task(
+        scheduled_restart_loop(
+            cron_expression=get_restart_cron_from_env(),
+            stop_event=stop_event,
+        )
+    )
+    inactivity_restart_task = asyncio.create_task(
+        inactivity_restart_loop(
+            inactivity_threshold_hours=get_inactivity_hours_from_env(),
+            stop_event=stop_event,
+        )
+    )
     stop_event_task = asyncio.create_task(stop_event.wait())
 
     def on_stop(fut):
         add_event_handlers_task.cancel()
         preload_messages_task.cancel()
+        old_messages_clean_loop_task.cancel()
+        scheduled_restart_task.cancel()
+        inactivity_restart_task.cancel()
 
     stop_event_task.add_done_callback(on_stop)
     await asyncio.gather(add_event_handlers_task, preload_messages_task)
     started_event.set()
     await old_messages_clean_loop_task
+    await scheduled_restart_task
+    await inactivity_restart_task
     await stop_event_task
 
 

@@ -20,6 +20,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt
 from packages.filtering import raw_should_ignore_message_chat
 from packages.message_loading import load_messages_by_parameters, load_messages_from_db
 from packages.models.root.TelegramMessage import TelegramMessage
+from packages.restart_manager import update_last_activity
 from packages.telegram_helpers import build_telegram_peer
 
 logger = logging.getLogger("tgdel-event-orchestration")
@@ -178,6 +179,7 @@ def get_on_new_message(sqlalchemy_session_maker: sessionmaker, client: TelegramC
             logger.debug("in on_new_message")
         message: telethon.tl.custom.message.Message = event.message
         await store_message_if_not_exists(message)
+        await update_last_activity()
 
     return on_new_message
 
@@ -382,10 +384,10 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
                     text=message.message,
                     media=blob,
                     timestamp=message.date,
-                    edit_date=None,
+                    edit_date=message.date,
                 )
             sqlalchemy_session.merge(orm_message)
-        return True
+            return True
 
     return store_message
 

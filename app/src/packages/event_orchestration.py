@@ -139,7 +139,7 @@ def get_on_message_deleted(
                         query_str=str(
                             query.compile(compile_kwargs={"literal_binds": True})
                         )
-                        if query
+                        if query is not None
                         else "(no query)",
                     )
                 )
@@ -261,7 +261,7 @@ def get_on_message_edited(
                         query_str=str(
                             query.compile(compile_kwargs={"literal_binds": True})
                         )
-                        if query
+                        if query is not None
                         else "(no query)",
                     )
                 )

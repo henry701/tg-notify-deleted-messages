@@ -172,14 +172,20 @@ def get_on_new_message(sqlalchemy_session_maker: sessionmaker, client: TelegramC
         stop=stop_after_attempt(3),
     )
     async def on_new_message(event: NewMessage.Event):
-        effective_level = logger.getEffectiveLevel()
-        if effective_level <= 5:
-            logger.log(5, f"on_new_message: {event}")
-        else:
-            logger.debug("in on_new_message")
-        message: telethon.tl.custom.message.Message = event.message
-        await store_message_if_not_exists(message)
-        await update_last_activity()
+        try:
+            effective_level = logger.getEffectiveLevel()
+            if effective_level <= 5:
+                logger.log(5, f"on_new_message: {event}")
+            else:
+                logger.debug("in on_new_message")
+            message: telethon.tl.custom.message.Message = event.message
+            await store_message_if_not_exists(message)
+            await update_last_activity()
+        except Exception as e:
+            logger.error(
+                f"Error in on_new_message handler: {e}",
+                exc_info=True,
+            )
 
     return on_new_message
 
@@ -421,10 +427,14 @@ async def add_event_handlers(
 ):
     logger.info("Adding event handlers")
     new_message_event = events.NewMessage(incoming=True, outgoing=True)
+    new_message_handler = get_on_new_message(
+        sqlalchemy_session_maker=sqlalchemy_session_maker, client=client
+    )
+    logger.info(
+        f"Registering NewMessage handler: {new_message_handler}, event: {new_message_event}"
+    )
     client.add_event_handler(
-        get_on_new_message(
-            sqlalchemy_session_maker=sqlalchemy_session_maker, client=client
-        ),
+        new_message_handler,
         new_message_event,
     )
     client.add_event_handler(

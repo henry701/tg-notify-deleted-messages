@@ -130,7 +130,7 @@ integration-postgres:
   before_script:
     - docker load -i container-image.tar
     - |
-      # Wait for postgres to be ready (uses job's service linking)
+      # Wait for postgres to be ready and capture its IP
       for i in $(seq 1 60); do
         if nc -z postgres 5432 2>/dev/null; then
           echo "Postgres is ready after $i attempt(s)."
@@ -142,12 +142,18 @@ integration-postgres:
         fi
         sleep 1
       done
+      
+      # Get postgres IP from /etc/hosts (Docker service linking)
+      POSTGRES_IP=$(grep postgres /etc/hosts | grep -v '^#' | awk '{print $1}' | head -1)
+      echo "Postgres IP: $POSTGRES_IP"
+      echo "export POSTGRES_IP=$POSTGRES_IP" > /tmp/postgres_env.sh
   script:
     - |
-      # Since we're using DinD, service containers run in outer docker
-      # We can connect to postgres from the job container using hostname 'postgres'
-      # The test container needs to reach postgres via the job's network
-      docker run --rm --network host --entrypoint python \
+      . /tmp/postgres_env.sh
+      echo "Running tests against Postgres at $POSTGRES_IP:5432"
+      
+      # Use --network host and pass postgres IP via --add-host
+      docker run --rm --network host --add-host postgres:$POSTGRES_IP --entrypoint python \
         -v "$CI_PROJECT_DIR/tests:/tests:ro" \
         -w /usr/app/src \
         -e INTEGRATION_DATABASE_URL="postgresql+psycopg://postgres:postgres@postgres:5432/postgres" \

@@ -44,7 +44,7 @@ unit-tests:
   before_script:
     - python --version
     - pip install --upgrade pip setuptools wheel
-    - pip install --no-cache-dir alchemysession
+    - pip install --no-cache-dir telethon-session-sqlalchemy
   script:
     - export PYTHONPATH="$CI_PROJECT_DIR/app/src"
     - pip install --no-cache-dir -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt

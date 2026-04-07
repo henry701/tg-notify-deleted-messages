@@ -84,7 +84,7 @@ unit-tests:
   variables:
     DATABASE_URL: "sqlite:///test.db"
   script:
-    - docker run --rm -v "$CI_PROJECT_DIR/tests:/tests:ro" -v "$CI_PROJECT_DIR/app:/app:ro" -w /app -e DATABASE_URL="$DATABASE_URL" -e PYTHONPATH=/app/src "$CONTAINER_IMAGE" python -m unittest discover -s /tests -p "test_*.py" -v
+    - docker run --rm -v "$CI_PROJECT_DIR/tests:/tests:ro" -w /usr/app/src -e DATABASE_URL="$DATABASE_URL" -e PYTHONPATH=/usr/app/src "$CONTAINER_IMAGE" python -m unittest discover -s /tests -p "test_*.py" -v
 
 integration-sqlite:
   extends: .test-base
@@ -95,7 +95,7 @@ integration-sqlite:
     INTEGRATION_DATABASE_URL: "sqlite+pysqlite:////tmp/tgdel-integration.sqlite3"
   script:
     - rm -f /tmp/tgdel-integration.sqlite3
-    - docker run --rm -v "$CI_PROJECT_DIR/tests:/tests:ro" -v "$CI_PROJECT_DIR/app:/app:ro" -v /tmp:/tmp -w /app -e INTEGRATION_DATABASE_URL="$INTEGRATION_DATABASE_URL" -e PYTHONPATH=/app/src "$CONTAINER_IMAGE" python -m unittest discover -s /tests -p "integration_*.py" -v
+    - docker run --rm -v "$CI_PROJECT_DIR/tests:/tests:ro" -v /tmp:/tmp -w /usr/app/src -e INTEGRATION_DATABASE_URL="$INTEGRATION_DATABASE_URL" -e PYTHONPATH=/usr/app/src "$CONTAINER_IMAGE" python -m unittest discover -s /tests -p "integration_*.py" -v
 
 integration-postgres:
   extends: .test-base
@@ -131,7 +131,7 @@ integration-postgres:
                   raise RuntimeError(f"Postgres never became ready: {exc}") from exc
               time.sleep(1)
       PY
-    - docker run --rm --network "container:$(docker ps --filter name=postgres --format '{{.ID}}')" -v "$CI_PROJECT_DIR/tests:/tests:ro" -v "$CI_PROJECT_DIR/app:/app:ro" -w /app -e INTEGRATION_DATABASE_URL="$INTEGRATION_DATABASE_URL" -e PYTHONPATH=/app/src "$CONTAINER_IMAGE" python -m unittest discover -s /tests -p "integration_*.py" -v
+    - docker run --rm --network "container:$(docker ps --filter name=postgres --format '{{.ID}}')" -v "$CI_PROJECT_DIR/tests:/tests:ro" -w /usr/app/src -e INTEGRATION_DATABASE_URL="$INTEGRATION_DATABASE_URL" -e PYTHONPATH=/usr/app/src "$CONTAINER_IMAGE" python -m unittest discover -s /tests -p "integration_*.py" -v
 
 docker-push:
   stage: push

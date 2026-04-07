@@ -90,7 +90,7 @@ unit-tests:
       -w /usr/app/src
       -e DATABASE_URL="$DATABASE_URL"
       -e PYTHONPATH=/usr/app/src
-      "$CONTAINER_IMAGE" -m pytest /tests/test_*.py -v
+      "$CONTAINER_IMAGE" -m pytest '/tests' -k 'test_' -v
 
 integration-sqlite:
   extends: .test-base
@@ -108,7 +108,7 @@ integration-sqlite:
       -w /usr/app/src
       -e INTEGRATION_DATABASE_URL="$INTEGRATION_DATABASE_URL"
       -e PYTHONPATH=/usr/app/src
-      "$CONTAINER_IMAGE" -m pytest /tests/integration_*.py -v
+      "$CONTAINER_IMAGE" -m pytest '/tests' -k 'integration_' -v
 
 integration-postgres:
   stage: test
@@ -148,7 +148,7 @@ integration-postgres:
       -w /usr/app/src
       -e INTEGRATION_DATABASE_URL="$INTEGRATION_DATABASE_URL"
       -e PYTHONPATH=/usr/app/src
-      "$CONTAINER_IMAGE" -m pytest /tests/integration_*.py -v
+      "$CONTAINER_IMAGE" -m pytest '/tests' -k 'integration_' -v
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH'

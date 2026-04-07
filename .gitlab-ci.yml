@@ -41,7 +41,9 @@ unit-tests:
   variables:
     DATABASE_URL: "sqlite:///test.db"
   script:
+    - pip list
     - pip install --cache-dir "$PIP_CACHE_DIR" -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt -r requirements-dev.txt
+    - pip list
     - python -m pytest tests/test_*.py -v
 
 integration-sqlite:

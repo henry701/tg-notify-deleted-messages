@@ -144,12 +144,13 @@ integration-postgres:
       done
   script:
     - |
-      # Use --network container:postgres to share postgres container's network
-      # In this mode, localhost:5432 in the inner container connects to postgres
-      docker run --rm --network container:postgres --entrypoint python \
+      # Since we're using DinD, service containers run in outer docker
+      # We can connect to postgres from the job container using hostname 'postgres'
+      # The test container needs to reach postgres via the job's network
+      docker run --rm --network host --entrypoint python \
         -v "$CI_PROJECT_DIR/tests:/tests:ro" \
         -w /usr/app/src \
-        -e INTEGRATION_DATABASE_URL="postgresql+psycopg://postgres:postgres@localhost:5432/postgres" \
+        -e INTEGRATION_DATABASE_URL="postgresql+psycopg://postgres:postgres@postgres:5432/postgres" \
         -e PYTHONPATH=/usr/app/src \
         "$CONTAINER_IMAGE" -m pytest '/tests' -k 'integration_' -v
   rules:

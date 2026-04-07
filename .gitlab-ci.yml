@@ -51,7 +51,7 @@ docker-build:
       docker buildx build \
         "$@" \
         .
-    - docker save $CONTAINER_IMAGE -o container-image.tar
+    - docker save $CONTAINER_IMAGE $CONTAINER_LATEST -o container-image.tar
   after_script:
     - docker buildx rm ci-builder || true
   artifacts:

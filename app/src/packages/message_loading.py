@@ -1,6 +1,8 @@
 """Message loading utilities for fetching messages from the database."""
 
 import telethon
+from sqlalchemy import func
+from sqlalchemy.orm import aliased
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import select
 from telethon import TelegramClient
@@ -14,7 +16,7 @@ from packages.models.root.TelegramPeer import TelegramPeer
 from packages.models.support.PeerType import PeerType
 
 
-async def load_messages_from_db(
+async def load_latest_messages_from_db(
     ids: list[int],
     peer_entity: telethon.types.User
     | telethon.types.Chat
@@ -22,26 +24,26 @@ async def load_messages_from_db(
     | None,
     sqlalchemy_session: Session,
 ) -> tuple:
-    """
-    Load messages from the database matching the given IDs and optional peer entity.
-
-    This function constructs a SQL query to find TelegramMessages with the specified IDs,
-    optionally filtered by chat peer ID and peer type if a peer_entity is provided.
-
-    Args:
-        ids: List of message IDs to load
-        peer_entity: Optional peer entity to filter by chat
-        sqlalchemy_session: Database session for executing the query
-
-    Returns:
-        Tuple of (the_query, db_results, unloaded_ids) where:
-        - the_query: The SQLAlchemy Select query object
-        - db_results: List of TelegramMessage objects found in the database
-        - unloaded_ids: List of IDs that were not found in the database
-    """
     from sqlalchemy.sql.selectable import Select
 
-    the_query: Select = select(TelegramMessage).where(TelegramMessage.id.in_(ids))
+    subq = (
+        select(
+            TelegramMessage.id,
+            TelegramMessage.chat_peer_id,
+            func.max(TelegramMessage.edit_date).label("max_edit_date"),
+        )
+        .where(TelegramMessage.id.in_(ids))
+        .group_by(TelegramMessage.id, TelegramMessage.chat_peer_id)
+        .subquery()
+    )
+
+    the_query: Select = select(TelegramMessage).join(
+        subq,
+        (TelegramMessage.id == subq.c.id)
+        & (TelegramMessage.chat_peer_id == subq.c.chat_peer_id)
+        & (TelegramMessage.edit_date == subq.c.max_edit_date),
+    )
+
     peer_entity_id = peer_entity.id if peer_entity is not None else None
     if peer_entity_id is not None:
         the_query = the_query.where(
@@ -52,12 +54,24 @@ async def load_messages_from_db(
         the_query = the_query.where(
             TelegramMessage.chat_peer.has(TelegramPeer.type == chat_peer_type)
         )
+
     db_results: list[TelegramMessage] = list(
         sqlalchemy_session.execute(the_query).scalars().all()
     )
     loaded_ids = [int(str(message.id)) for message in db_results]
     unloaded_ids = [msg_id for msg_id in ids if msg_id not in loaded_ids]
     return (the_query, db_results, unloaded_ids)
+
+
+async def load_messages_from_db(
+    ids: list[int],
+    peer_entity: telethon.types.User
+    | telethon.types.Chat
+    | telethon.types.Channel
+    | None,
+    sqlalchemy_session: Session,
+) -> tuple:
+    return await load_latest_messages_from_db(ids, peer_entity, sqlalchemy_session)
 
 
 async def load_messages_by_parameters(

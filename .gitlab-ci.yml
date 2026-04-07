@@ -6,12 +6,11 @@ variables:
   CONTAINER_LATEST: $CI_REGISTRY_IMAGE:latest
   CONTAINER_CACHE_DEFAULT: $CI_REGISTRY_IMAGE:buildcache-$CI_DEFAULT_BRANCH
   CONTAINER_CACHE_BRANCH: $CI_REGISTRY_IMAGE:buildcache-$CI_COMMIT_REF_SLUG
-  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
   PYTHONPATH: "$CI_PROJECT_DIR/app/src"
 
 stages:
-  - test
   - build
+  - test
   - push
 
 workflow:
@@ -19,79 +18,6 @@ workflow:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - when: never
-
-default:
-  image: python:3.12-slim
-  cache:
-    key: pip-$CI_COMMIT_REF_SLUG
-    paths:
-      - .pip-cache/
-
-.python-test-job:
-  stage: test
-  before_script:
-    - apt-get update && apt-get install -y --no-install-recommends git
-    - python --version
-    - pip install --upgrade pip setuptools wheel
-    - pip install --no-cache-dir git+https://github.com/henry701/telethon-session-sqlalchemy@12615470b54e75055d2bc1d73d56b13ca41a1875
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_COMMIT_BRANCH'
-
-unit-tests:
-  extends: .python-test-job
-  variables:
-    DATABASE_URL: "sqlite:///test.db"
-    PYTHONPATH: "$CI_PROJECT_DIR/app/src"
-  script:
-    - pip install --cache-dir "$PIP_CACHE_DIR" -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt
-    - python -m unittest discover -s tests -p "test_*.py" -v
-
-integration-sqlite:
-  extends: .python-test-job
-  variables:
-    INTEGRATION_DATABASE_URL: "sqlite+pysqlite:////tmp/tgdel-integration.sqlite3"
-  script:
-    - rm -f /tmp/tgdel-integration.sqlite3
-    - pip install --cache-dir "$PIP_CACHE_DIR" -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt
-    - python -m unittest discover -s tests -p "integration_*.py" -v
-
-integration-postgres:
-  extends: .python-test-job
-  services:
-    - name: postgres:16-alpine
-      alias: postgres
-  variables:
-    POSTGRES_DB: postgres
-    POSTGRES_USER: postgres
-    POSTGRES_PASSWORD: postgres
-    INTEGRATION_DATABASE_URL: "postgresql+psycopg://postgres:postgres@postgres:5432/postgres"
-  script:
-    - apt-get update
-    - apt-get install -y --no-install-recommends libpq5
-    - rm -rf /var/lib/apt/lists/*
-    - pip install --cache-dir "$PIP_CACHE_DIR" -r app/meta/requirements/base.txt -r app/meta/requirements/db_cripto.txt -r app/meta/requirements/pgsql-psycopg3.txt
-    - |
-      python - <<'PY'
-      import os
-      import time
-      import sqlalchemy
-      from sqlalchemy import text
-
-      database_url = os.environ["INTEGRATION_DATABASE_URL"]
-      for attempt in range(60):
-          try:
-              engine = sqlalchemy.create_engine(database_url)
-              with engine.connect() as connection:
-                  connection.execute(text("SELECT 1"))
-              print(f"Postgres is ready after {attempt + 1} attempt(s).")
-              break
-          except Exception as exc:
-              if attempt == 59:
-                  raise RuntimeError(f"Postgres never became ready: {exc}") from exc
-              time.sleep(1)
-      PY
-    - python -m unittest discover -s tests -p "integration_*.py" -v
 
 docker-build:
   stage: build
@@ -135,6 +61,77 @@ docker-build:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH'
+
+.test-base:
+  stage: test
+  image: docker:25
+  services:
+    - docker:25-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_HOST: tcp://docker:2376
+  before_script:
+    - docker load -i container-image.tar
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+
+unit-tests:
+  extends: .test-base
+  needs:
+    - job: docker-build
+      artifacts: true
+  variables:
+    DATABASE_URL: "sqlite:///test.db"
+  script:
+    - docker run --rm -v "$CI_PROJECT_DIR/tests:/tests:ro" -v "$CI_PROJECT_DIR/app:/app:ro" -w /app -e DATABASE_URL="$DATABASE_URL" -e PYTHONPATH=/app/src "$CONTAINER_IMAGE" python -m unittest discover -s /tests -p "test_*.py" -v
+
+integration-sqlite:
+  extends: .test-base
+  needs:
+    - job: docker-build
+      artifacts: true
+  variables:
+    INTEGRATION_DATABASE_URL: "sqlite+pysqlite:////tmp/tgdel-integration.sqlite3"
+  script:
+    - rm -f /tmp/tgdel-integration.sqlite3
+    - docker run --rm -v "$CI_PROJECT_DIR/tests:/tests:ro" -v "$CI_PROJECT_DIR/app:/app:ro" -v /tmp:/tmp -w /app -e INTEGRATION_DATABASE_URL="$INTEGRATION_DATABASE_URL" -e PYTHONPATH=/app/src "$CONTAINER_IMAGE" python -m unittest discover -s /tests -p "integration_*.py" -v
+
+integration-postgres:
+  extends: .test-base
+  needs:
+    - job: docker-build
+      artifacts: true
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
+  variables:
+    POSTGRES_DB: postgres
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+    INTEGRATION_DATABASE_URL: "postgresql+psycopg://postgres:postgres@postgres:5432/postgres"
+  script:
+    - |
+      python - <<'PY'
+      import os
+      import time
+      import sqlalchemy
+      from sqlalchemy import text
+
+      database_url = os.environ["INTEGRATION_DATABASE_URL"]
+      for attempt in range(60):
+          try:
+              engine = sqlalchemy.create_engine(database_url)
+              with engine.connect() as connection:
+                  connection.execute(text("SELECT 1"))
+              print(f"Postgres is ready after {attempt + 1} attempt(s).")
+              break
+          except Exception as exc:
+              if attempt == 59:
+                  raise RuntimeError(f"Postgres never became ready: {exc}") from exc
+              time.sleep(1)
+      PY
+    - docker run --rm --network "container:$(docker ps --filter name=postgres --format '{{.ID}}')" -v "$CI_PROJECT_DIR/tests:/tests:ro" -v "$CI_PROJECT_DIR/app:/app:ro" -w /app -e INTEGRATION_DATABASE_URL="$INTEGRATION_DATABASE_URL" -e PYTHONPATH=/app/src "$CONTAINER_IMAGE" python -m unittest discover -s /tests -p "integration_*.py" -v
 
 docker-push:
   stage: push

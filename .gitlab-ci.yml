@@ -130,9 +130,9 @@ integration-postgres:
   before_script:
     - docker load -i container-image.tar
     - |
-      # Wait for postgres to be ready
+      # Wait for postgres to be ready (uses job's service linking)
       for i in $(seq 1 60); do
-        if docker run --rm alpine:3 sh -c "apk add --no-cache postgresql-client >/dev/null 2>&1 && pg_isready -h postgres -p 5432 -U postgres" 2>/dev/null; then
+        if nc -z postgres 5432 2>/dev/null; then
           echo "Postgres is ready after $i attempt(s)."
           break
         fi
@@ -142,23 +142,22 @@ integration-postgres:
         fi
         sleep 1
       done
+    - |
+      # Get postgres container IP address
+      # The postgres service is linked to this job container
+      POSTGRES_IP=$(getent hosts postgres | awk '{ print $1 }')
+      echo "Postgres IP: $POSTGRES_IP"
+      echo "export POSTGRES_IP=$POSTGRES_IP" > /tmp/postgres_env.sh
   script:
     - |
-      # Get postgres IP from the DinD container network
-      # The postgres service is available via linked container
-      POSTGRES_IP=$(docker run --rm alpine:3 sh -c "ping -c 1 postgres 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' || echo 'postgres'")
-      if [ "$POSTGRES_IP" = "postgres" ]; then
-        # Fallback to direct hostname if ping doesn't work
-        POSTGRES_IP="postgres"
-      fi
-      echo "Using Postgres at: $POSTGRES_IP"
+      . /tmp/postgres_env.sh
+      echo "Running tests against Postgres at $POSTGRES_IP:5432"
       
-      # Run tests - use postgres service hostname directly
-      # In service-linked containers, the hostname 'postgres' resolves
-      docker run --rm --network container:postgres --entrypoint python \
+      # Use --add-host to inject postgres hostname into inner container
+      docker run --rm --network host --add-host postgres:$POSTGRES_IP --entrypoint python \
         -v "$CI_PROJECT_DIR/tests:/tests:ro" \
         -w /usr/app/src \
-        -e INTEGRATION_DATABASE_URL="postgresql+psycopg://postgres:postgres@localhost:5432/postgres" \
+        -e INTEGRATION_DATABASE_URL="postgresql+psycopg://postgres:postgres@postgres:5432/postgres" \
         -e PYTHONPATH=/usr/app/src \
         "$CONTAINER_IMAGE" -m pytest '/tests' -k 'integration_' -v
   rules:

@@ -1,5 +1,13 @@
 from packages.models.root.TelegramPeer import TelegramPeer
-from sqlalchemy import TIMESTAMP, BigInteger, Boolean, Column, LargeBinary, UnicodeText
+from sqlalchemy import (
+    TIMESTAMP,
+    BigInteger,
+    Boolean,
+    Column,
+    Index,
+    LargeBinary,
+    UnicodeText,
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql.schema import ForeignKey
 
@@ -25,6 +33,10 @@ class TelegramMessage(Base):
         TIMESTAMP(timezone=True),
         nullable=False,
         primary_key=True,
+    )
+
+    __table_args__ = (
+        Index("ix_telegram_messages_id_chat_peer_id", "id", "chat_peer_id"),
     )
     chat_peer = relationship(
         TelegramPeer, lazy=False, cascade="all", foreign_keys=[chat_peer_id]

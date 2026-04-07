@@ -370,24 +370,24 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
                     .first()
                 )
 
-        if existing:
-            existing.text = message.message
-            existing.media = blob
-            existing.timestamp = message.date
-            existing.edit_date = message.date
-            orm_message = existing
-        else:
-            orm_message = TelegramMessage(
-                id=message.id,
-                from_peer=built_from_peer,
-                chat_peer=built_chat_peer,
-                text=message.message,
-                media=blob,
-                timestamp=message.date,
-                edit_date=message.date,
-            )
+            if existing:
+                existing.text = message.message
+                existing.media = blob
+                existing.timestamp = message.date
+                existing.edit_date = message.date
+                orm_message = existing
+            else:
+                orm_message = TelegramMessage(
+                    id=message.id,
+                    from_peer=built_from_peer,
+                    chat_peer=built_chat_peer,
+                    text=message.message,
+                    media=blob,
+                    timestamp=message.date,
+                    edit_date=message.date,
+                )
             sqlalchemy_session.merge(orm_message)
-        return True
+            return True
 
     return store_message
 

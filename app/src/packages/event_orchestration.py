@@ -304,6 +304,10 @@ def get_on_message_edited(
                 )
 
             if hasattr(event, "message") and event.message:
+                for message in messages:
+                    old_text = message.text or ""
+                    new_text = getattr(event.message, "text", None) or ""
+                    message.text = f"**OLD:** {old_text}\n**NEW:** {new_text}"
                 await store_message_for_edit(event.message, check_chat=False)
         except Exception as e:
             logger.error(

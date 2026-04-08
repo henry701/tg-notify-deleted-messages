@@ -182,6 +182,31 @@ class PreloadCheckpointRouteTests(unittest.TestCase):
             sqlalchemy_session_maker=self.session_maker_mock,
         )
 
+    @patch("packages.http.find_chat_peer_id_for_checkpoint_query")
+    def test_set_preload_checkpoint_returns_404_for_unknown_direct_chat_peer_id(
+        self, find_chat_peer_id_mock
+    ):
+        find_chat_peer_id_mock.return_value = None
+        add_informative_routes(
+            self.client_mock,
+            self.bot_mock,
+            self.app,
+            self.loop_mock,
+            self.session_maker_mock,
+        )
+
+        with self.app.test_client() as client:
+            response = client.post(
+                "/preload_checkpoints/set"
+                "?chat_peer_id=321&timestamp=2026-04-08T12:00:00Z"
+            )
+            self.assertEqual(response.status_code, 404)
+
+        find_chat_peer_id_mock.assert_called_once_with(
+            sqlalchemy_session_maker=self.session_maker_mock,
+            chat_peer_id=321,
+        )
+
     def test_set_preload_checkpoint_rejects_naive_timestamp(self):
         add_informative_routes(
             self.client_mock,
@@ -215,9 +240,13 @@ class PreloadCheckpointRouteTests(unittest.TestCase):
             payload = response.get_json()
             self.assertEqual(payload["deleted"], 4)
 
+    @patch("packages.http.find_chat_peer_id_for_checkpoint_query")
     @patch("packages.http.clear_preload_checkpoint")
-    def test_clear_single_preload_checkpoint_route(self, clear_checkpoint_mock):
+    def test_clear_single_preload_checkpoint_route(
+        self, clear_checkpoint_mock, find_chat_peer_id_mock
+    ):
         clear_checkpoint_mock.return_value = 1
+        find_chat_peer_id_mock.return_value = 321
         add_informative_routes(
             self.client_mock,
             self.bot_mock,
@@ -233,7 +262,33 @@ class PreloadCheckpointRouteTests(unittest.TestCase):
             self.assertEqual(payload["chat_peer_id"], 321)
             self.assertEqual(payload["deleted"], 1)
 
+        find_chat_peer_id_mock.assert_called_once_with(
+            sqlalchemy_session_maker=self.session_maker_mock,
+            chat_peer_id=321,
+        )
         clear_checkpoint_mock.assert_called_once_with(321, self.session_maker_mock)
+
+    @patch("packages.http.find_chat_peer_id_for_checkpoint_query")
+    def test_clear_single_preload_checkpoint_returns_404_for_unknown_chat_peer_id(
+        self, find_chat_peer_id_mock
+    ):
+        find_chat_peer_id_mock.return_value = None
+        add_informative_routes(
+            self.client_mock,
+            self.bot_mock,
+            self.app,
+            self.loop_mock,
+            self.session_maker_mock,
+        )
+
+        with self.app.test_client() as client:
+            response = client.post("/preload_checkpoints/clear?chat_peer_id=321")
+            self.assertEqual(response.status_code, 404)
+
+        find_chat_peer_id_mock.assert_called_once_with(
+            sqlalchemy_session_maker=self.session_maker_mock,
+            chat_peer_id=321,
+        )
 
 
 class CreateAppTests(unittest.TestCase):

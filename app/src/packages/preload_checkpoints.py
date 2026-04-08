@@ -82,7 +82,13 @@ def find_chat_peer_id_for_checkpoint_query(
     peer_type: PeerType | None = None,
 ) -> int | None:
     if chat_peer_id is not None:
-        return int(chat_peer_id)
+        with sqlalchemy_session_maker.begin() as sqlalchemy_session:
+            peer = sqlalchemy_session.execute(
+                select(TelegramPeer).where(TelegramPeer.id == int(chat_peer_id))
+            ).scalar_one_or_none()
+        if peer is None:
+            return None
+        return int(peer.id)
     if peer_id is None or peer_type is None:
         return None
     with sqlalchemy_session_maker.begin() as sqlalchemy_session:

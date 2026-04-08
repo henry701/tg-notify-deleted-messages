@@ -255,7 +255,13 @@ def add_informative_routes(
     def resolve_checkpoint_chat_peer_id(require_target: bool) -> int | None:
         chat_peer_id_value = flask.request.args.get("chat_peer_id")
         if chat_peer_id_value is not None:
-            return int(chat_peer_id_value)
+            resolved_chat_peer_id = find_chat_peer_id_for_checkpoint_query(
+                sqlalchemy_session_maker=sqlalchemy_session_maker,
+                chat_peer_id=int(chat_peer_id_value),
+            )
+            if resolved_chat_peer_id is None:
+                raise LookupError("Unable to resolve peer to a known chat_peer_id.")
+            return resolved_chat_peer_id
 
         peer_id_value = flask.request.args.get("peer_id")
         peer_type_value = flask.request.args.get("peer_type")

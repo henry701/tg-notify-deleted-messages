@@ -1,5 +1,6 @@
 import asyncio
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import telethon.types
@@ -555,21 +556,26 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         notify_edit = AsyncMock()
         gather_func = AsyncMock(side_effect=self._await_all)
 
-        mock_message = MagicMock()
-        mock_message.id = 1
-        mock_message.text = "old text"
+        mock_message = SimpleNamespace(id=1, text="old text")
 
         event_mock = AsyncMock()
         event_mock.message_id = 1
         event_mock.get_input_chat = AsyncMock(return_value=None)
-        event_mock.message = MagicMock()
+        event_mock.message = AsyncMock()
         event_mock.message.text = "new text"
 
-        with patch(
-            "packages.event_orchestration.load_messages_by_parameters",
-            new_callable=AsyncMock,
-        ) as load_mock:
+        with (
+            patch(
+                "packages.event_orchestration.load_messages_by_parameters",
+                new_callable=AsyncMock,
+            ) as load_mock,
+            patch(
+                "packages.event_orchestration.get_store_message",
+            ) as get_store_message_mock,
+        ):
             load_mock.return_value = ([mock_message], MagicMock(), [], [])
+            store_message_mock = AsyncMock()
+            get_store_message_mock.return_value = store_message_mock
 
             handler = get_on_message_edited(
                 client_mock,
@@ -581,9 +587,72 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
 
         gather_func.assert_called_once()
         notify_edit.assert_called_once()
-        called_text = notify_edit.call_args[0][0].text
-        self.assertIn("OLD:", called_text)
-        self.assertIn("NEW:", called_text)
+        called_message = notify_edit.call_args[0][0]
+        self.assertIsNot(called_message, mock_message)
+        self.assertEqual(mock_message.text, "old text")
+        self.assertEqual(called_message.edit_old_text, "old text")
+        self.assertEqual(called_message.text, "new text")
+        store_message_mock.assert_awaited_once_with(event_mock.message, check_chat=True)
+
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+            "NOTIFY_OUTGOING_MESSAGES": "True",
+            "EDITED_MESSAGES_NOTIFICATION_CONCURRENCY": "1",
+        },
+    )
+    async def test_notifies_when_new_text_is_empty_string(self):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        notify_edit = AsyncMock()
+        gather_func = AsyncMock(side_effect=self._await_all)
+
+        mock_message = SimpleNamespace(id=1, text="old text")
+
+        event_mock = AsyncMock()
+        event_mock.message_id = 1
+        event_mock.get_input_chat = AsyncMock(return_value=None)
+        event_mock.message = AsyncMock()
+        event_mock.message.text = ""
+
+        with (
+            patch(
+                "packages.event_orchestration.load_messages_by_parameters",
+                new_callable=AsyncMock,
+            ) as load_mock,
+            patch(
+                "packages.event_orchestration.get_store_message",
+            ) as get_store_message_mock,
+        ):
+            load_mock.return_value = ([mock_message], MagicMock(), [], [])
+            store_message_mock = AsyncMock()
+            get_store_message_mock.return_value = store_message_mock
+
+            handler = get_on_message_edited(
+                client_mock,
+                session_maker_mock,
+                notify_edit,
+                gather_func,
+            )
+            await handler(event_mock)
+
+        notify_edit.assert_called_once()
+        called_message = notify_edit.call_args[0][0]
+        self.assertEqual(called_message.edit_old_text, "old text")
+        self.assertEqual(called_message.text, "")
+        store_message_mock.assert_awaited_once_with(event_mock.message, check_chat=True)
 
     @patch.dict(
         "os.environ",
@@ -682,6 +751,61 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
 
         notify_edit.assert_not_called()
         gather_func.assert_not_called()
+
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "1",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+            "NOTIFY_OUTGOING_MESSAGES": "True",
+            "EDITED_MESSAGES_NOTIFICATION_CONCURRENCY": "1",
+        },
+    )
+    async def test_stores_edited_messages_with_chat_filtering_enabled(self):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        notify_edit = AsyncMock()
+        gather_func = AsyncMock(side_effect=self._await_all)
+
+        event_mock = AsyncMock()
+        event_mock.message_id = 1
+        event_mock.get_input_chat = AsyncMock(return_value=None)
+        event_mock.message = AsyncMock()
+        event_mock.message.text = "edited text"
+
+        with (
+            patch(
+                "packages.event_orchestration.load_messages_by_parameters",
+                new_callable=AsyncMock,
+            ) as load_mock,
+            patch(
+                "packages.event_orchestration.get_store_message",
+            ) as get_store_message_mock,
+        ):
+            load_mock.return_value = ([], MagicMock(), [], [1])
+            store_message_mock = AsyncMock()
+            get_store_message_mock.return_value = store_message_mock
+
+            handler = get_on_message_edited(
+                client_mock,
+                session_maker_mock,
+                notify_edit,
+                gather_func,
+            )
+            await handler(event_mock)
+
+        notify_edit.assert_not_called()
+        store_message_mock.assert_awaited_once_with(event_mock.message, check_chat=True)
 
 
 class GetMessageMediaBlobThresholdTests(unittest.IsolatedAsyncioTestCase):

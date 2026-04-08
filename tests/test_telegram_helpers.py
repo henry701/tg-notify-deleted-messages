@@ -6,6 +6,7 @@ from packages.models.support.PeerType import PeerType
 from packages.telegram_helpers import (
     build_peer_entity,
     build_telegram_peer,
+    format_default_message_edit_text,
     format_default_message_text,
     format_default_unknown_message_text,
     get_mention_text,
@@ -451,6 +452,59 @@ class FormatDefaultMessageTextTests(unittest.IsolatedAsyncioTestCase):
             ):
                 with self.assertRaises(ValueError):
                     await format_default_message_text(client, message, tried=True)
+
+
+class FormatDefaultMessageEditTextTests(unittest.IsolatedAsyncioTestCase):
+    async def test_formats_edited_message_with_user_and_chat(self):
+        from packages.models.root.TelegramMessage import TelegramMessage
+        from packages.models.root.TelegramPeer import TelegramPeer
+        from packages.models.support.PeerType import PeerType
+
+        client = AsyncMock()
+        user_entity = MagicMock()
+        user_entity.id = 100
+        user_entity.first_name = "John"
+        user_entity.last_name = "Doe"
+        user_entity.title = None
+        user_entity.username = None
+        user_entity.phone = None
+        user_entity.chat_id = None
+
+        chat_entity = MagicMock()
+        chat_entity.id = 200
+        chat_entity.title = "Edited Chat"
+        chat_entity.first_name = None
+        chat_entity.last_name = None
+        chat_entity.username = None
+        chat_entity.phone = None
+        chat_entity.chat_id = None
+
+        client.get_entity.side_effect = [user_entity, chat_entity]
+
+        from_peer = TelegramPeer(id=1, peer_id=100, access_hash=1, type=PeerType.USER)
+        chat_peer = TelegramPeer(id=2, peer_id=200, access_hash=2, type=PeerType.CHAT)
+
+        message = TelegramMessage(
+            id=1,
+            from_peer=from_peer,
+            chat_peer=chat_peer,
+            text="updated text",
+            media=None,
+            timestamp=None,
+        )
+
+        with patch(
+            "packages.telegram_helpers.to_telethon_input_peer", return_value=MagicMock()
+        ):
+            message.edit_old_text = "previous text"
+            result = await format_default_message_edit_text(client, message)
+
+        self.assertIn("Edited message", result)
+        self.assertIn("John Doe", result)
+        self.assertIn("Edited Chat", result)
+        self.assertIn("previous text", result)
+        self.assertIn("updated text", result)
+        self.assertIn("tg://chat?id=200", result)
 
 
 class FormatDefaultUnknownMessageTextTests(unittest.IsolatedAsyncioTestCase):

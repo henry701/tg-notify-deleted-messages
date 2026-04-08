@@ -2,7 +2,7 @@
 
 import telethon
 from sqlalchemy import func
-from sqlalchemy.orm import aliased, selectinload
+from sqlalchemy.orm import aliased
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import select
 from telethon import TelegramClient
@@ -37,18 +37,11 @@ async def load_latest_messages_from_db(
         .subquery()
     )
 
-    the_query: Select = (
-        select(TelegramMessage)
-        .options(
-            selectinload(TelegramMessage.from_peer),
-            selectinload(TelegramMessage.chat_peer),
-        )
-        .join(
-            subq,
-            (TelegramMessage.id == subq.c.id)
-            & (TelegramMessage.chat_peer_id == subq.c.chat_peer_id)
-            & (TelegramMessage.edit_date == subq.c.max_edit_date),
-        )
+    the_query: Select = select(TelegramMessage).join(
+        subq,
+        (TelegramMessage.id == subq.c.id)
+        & (TelegramMessage.chat_peer_id == subq.c.chat_peer_id)
+        & (TelegramMessage.edit_date == subq.c.max_edit_date),
     )
 
     peer_entity_id = peer_entity.id if peer_entity is not None else None

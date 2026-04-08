@@ -597,6 +597,57 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
             "EDITED_MESSAGES_NOTIFICATION_CONCURRENCY": "1",
         },
     )
+    async def test_skips_same_text_edit(self):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        notify_edit = AsyncMock()
+        gather_func = AsyncMock(side_effect=self._await_all)
+
+        mock_message = MagicMock()
+        mock_message.id = 1
+        mock_message.text = "same text"
+
+        event_mock = AsyncMock()
+        event_mock.message_id = 1
+        event_mock.get_input_chat = AsyncMock(return_value=None)
+        event_mock.message = MagicMock()
+        event_mock.message.text = "same text"
+
+        with patch(
+            "packages.event_orchestration.load_messages_by_parameters",
+            new_callable=AsyncMock,
+        ) as load_mock:
+            load_mock.return_value = ([mock_message], MagicMock(), [], [])
+
+            handler = get_on_message_edited(
+                client_mock,
+                session_maker_mock,
+                notify_edit,
+                gather_func,
+            )
+            await handler(event_mock)
+
+        notify_edit.assert_not_called()
+
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+            "NOTIFY_OUTGOING_MESSAGES": "True",
+            "EDITED_MESSAGES_NOTIFICATION_CONCURRENCY": "1",
+        },
+    )
     async def test_handles_unloaded_ids_present(self):
         client_mock = AsyncMock()
         session_maker_mock = MagicMock()

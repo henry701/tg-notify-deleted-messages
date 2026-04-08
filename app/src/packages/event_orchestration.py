@@ -294,8 +294,25 @@ def get_on_message_edited(
                     )
 
             awaitables: list[Awaitable[Any]] = []
-            for message in messages:
-                awaitables.append(notify_message_edit(message, client))
+            new_text = None
+            if event.message:
+                new_text = getattr(event.message, "text", None)
+
+            should_skip_edit = False
+            if new_text is not None and messages:
+                db_text = messages[0].text or "" if messages else ""
+                if db_text == new_text:
+                    logger.debug(
+                        "Edit event with same text, likely reaction. Skipping notification."
+                    )
+                    should_skip_edit = True
+
+            if not should_skip_edit:
+                for message in messages:
+                    old_text = message.text or ""
+                    if new_text:
+                        message.text = f"**OLD:** {old_text}\n**NEW:** {new_text}"
+                    awaitables.append(notify_message_edit(message, client))
             if unloaded_ids and len(unloaded_ids):
                 pass
             if len(awaitables) > 0:
@@ -304,10 +321,6 @@ def get_on_message_edited(
                 )
 
             if hasattr(event, "message") and event.message:
-                for message in messages:
-                    old_text = message.text or ""
-                    new_text = getattr(event.message, "text", None) or ""
-                    message.text = f"**OLD:** {old_text}\n**NEW:** {new_text}"
                 await store_message_for_edit(event.message, check_chat=False)
         except Exception as e:
             logger.error(

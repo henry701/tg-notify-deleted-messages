@@ -1,6 +1,6 @@
 import asyncio
 import unittest
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from packages.background_jobs import (
@@ -201,14 +201,16 @@ class PreloadMessagesTests(unittest.IsolatedAsyncioTestCase):
 
     @patch.dict(
         "os.environ",
-        {"PRELOAD_MESSAGES": "1", "PRELOAD_MESSAGES_STATUS_REPORT_INTERVAL": "0"},
+        {
+            "PRELOAD_MESSAGES": "1",
+            "PRELOAD_MESSAGES_STATUS_REPORT_INTERVAL": "0",
+            "PRELOAD_CHECKPOINTS_ENABLED": "1",
+        },
     )
-    async def test_preloads_messages_for_dialog(self):
+    async def test_preloads_messages_for_dialog_from_ttl_floor(self):
         client_mock = AsyncMock()
         client_mock.is_connected = MagicMock(return_value=True)
         client_mock.is_user_authorized = AsyncMock(return_value=True)
-
-        from datetime import datetime, timezone
 
         dialog_mock = MagicMock()
         dialog_mock.id = 123
@@ -217,17 +219,557 @@ class PreloadMessagesTests(unittest.IsolatedAsyncioTestCase):
         entity_mock = MagicMock()
         client_mock.get_entity = AsyncMock(return_value=entity_mock)
 
+        fixed_now = datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc)
         msg_mock = MagicMock()
         msg_mock.id = 1
-        msg_mock.date = datetime.now(tz=timezone.utc)
+        msg_mock.date = fixed_now - timedelta(hours=1)
         msg_mock.message = "test"
 
-        messages_list = MagicMock()
-        messages_list.__len__ = MagicMock(return_value=1)
-        messages_list.__iter__ = MagicMock(return_value=iter([msg_mock]))
-        messages_list.__getitem__ = MagicMock(return_value=msg_mock)
+        async def iter_messages_gen():
+            yield msg_mock
 
-        client_mock.get_messages = AsyncMock(side_effect=[[msg_mock], []])
+        client_mock.iter_messages = MagicMock(return_value=iter_messages_gen())
+
+        async def iter_dialogs_gen():
+            yield dialog_mock
+
+        client_mock.iter_dialogs = iter_dialogs_gen
+
+        session_maker_mock = MagicMock()
+        chat_peer_mock = MagicMock()
+        chat_peer_mock.id = 321
+
+        with (
+            patch("packages.background_jobs.datetime", wraps=datetime) as datetime_mock,
+            patch(
+                "packages.background_jobs.get_should_ignore_message_chat"
+            ) as ignore_mock,
+            patch(
+                "packages.background_jobs.get_store_message_if_not_exists"
+            ) as store_mock,
+            patch(
+                "packages.background_jobs.build_telegram_peer", new_callable=AsyncMock
+            ) as build_peer_mock,
+            patch(
+                "packages.background_jobs.get_preload_checkpoint"
+            ) as get_checkpoint_mock,
+            patch(
+                "packages.background_jobs.upsert_preload_checkpoint"
+            ) as upsert_checkpoint_mock,
+        ):
+            datetime_mock.now.return_value = fixed_now
+            ignore_fn = AsyncMock(return_value=False)
+            ignore_mock.return_value = ignore_fn
+            store_fn = AsyncMock(return_value=True)
+            store_mock.return_value = store_fn
+            build_peer_mock.return_value = chat_peer_mock
+            get_checkpoint_mock.return_value = None
+
+            await preload_messages(client_mock, session_maker_mock)
+
+            client_mock.iter_messages.assert_called_once_with(
+                entity_mock,
+                reverse=True,
+                offset_date=fixed_now - messages_ttl_delta,
+            )
+            upsert_checkpoint_mock.assert_called_once_with(
+                chat_peer_id=321,
+                preloaded_through_message_id=1,
+                preloaded_through_timestamp=fixed_now,
+                sqlalchemy_session_maker=session_maker_mock,
+            )
+
+    @patch.dict(
+        "os.environ",
+        {
+            "PRELOAD_MESSAGES": "1",
+            "PRELOAD_MESSAGES_STATUS_REPORT_INTERVAL": "0",
+            "PRELOAD_CHECKPOINTS_ENABLED": "1",
+        },
+    )
+    async def test_resumes_from_checkpoint_message_id(self):
+        client_mock = AsyncMock()
+        client_mock.is_connected = MagicMock(return_value=True)
+        client_mock.is_user_authorized = AsyncMock(return_value=True)
+
+        dialog_mock = MagicMock()
+        dialog_mock.id = 123
+        dialog_mock.input_entity = MagicMock()
+
+        entity_mock = MagicMock()
+        client_mock.get_entity = AsyncMock(return_value=entity_mock)
+
+        async def iter_messages_gen():
+            if False:
+                yield None
+
+        client_mock.iter_messages = MagicMock(return_value=iter_messages_gen())
+
+        async def iter_dialogs_gen():
+            yield dialog_mock
+
+        client_mock.iter_dialogs = iter_dialogs_gen
+
+        session_maker_mock = MagicMock()
+        chat_peer_mock = MagicMock()
+        chat_peer_mock.id = 321
+        fixed_now = datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc)
+        checkpoint_mock = MagicMock()
+        checkpoint_mock.preloaded_through_timestamp = fixed_now
+        checkpoint_mock.preloaded_through_message_id = 55
+
+        with (
+            patch("packages.background_jobs.datetime", wraps=datetime) as datetime_mock,
+            patch(
+                "packages.background_jobs.get_should_ignore_message_chat"
+            ) as ignore_mock,
+            patch(
+                "packages.background_jobs.get_store_message_if_not_exists"
+            ) as store_mock,
+            patch(
+                "packages.background_jobs.build_telegram_peer", new_callable=AsyncMock
+            ) as build_peer_mock,
+            patch(
+                "packages.background_jobs.get_preload_checkpoint"
+            ) as get_checkpoint_mock,
+            patch(
+                "packages.background_jobs.upsert_preload_checkpoint"
+            ) as upsert_checkpoint_mock,
+        ):
+            datetime_mock.now.return_value = fixed_now
+            ignore_mock.return_value = AsyncMock(return_value=False)
+            store_mock.return_value = AsyncMock(return_value=True)
+            build_peer_mock.return_value = chat_peer_mock
+            get_checkpoint_mock.return_value = checkpoint_mock
+
+            await preload_messages(client_mock, session_maker_mock)
+
+            client_mock.iter_messages.assert_called_once_with(
+                entity_mock,
+                reverse=True,
+                min_id=55,
+            )
+            upsert_checkpoint_mock.assert_called_once_with(
+                chat_peer_id=321,
+                preloaded_through_message_id=55,
+                preloaded_through_timestamp=fixed_now,
+                sqlalchemy_session_maker=session_maker_mock,
+            )
+
+    @patch.dict(
+        "os.environ",
+        {
+            "PRELOAD_MESSAGES": "1",
+            "PRELOAD_MESSAGES_STATUS_REPORT_INTERVAL": "0",
+            "PRELOAD_CHECKPOINTS_ENABLED": "1",
+        },
+    )
+    async def test_resumes_from_timestamp_only_checkpoint(self):
+        client_mock = AsyncMock()
+        client_mock.is_connected = MagicMock(return_value=True)
+        client_mock.is_user_authorized = AsyncMock(return_value=True)
+
+        dialog_mock = MagicMock()
+        dialog_mock.id = 123
+        dialog_mock.input_entity = MagicMock()
+
+        entity_mock = MagicMock()
+        client_mock.get_entity = AsyncMock(return_value=entity_mock)
+
+        async def iter_messages_gen():
+            if False:
+                yield None
+
+        client_mock.iter_messages = MagicMock(return_value=iter_messages_gen())
+
+        async def iter_dialogs_gen():
+            yield dialog_mock
+
+        client_mock.iter_dialogs = iter_dialogs_gen
+
+        session_maker_mock = MagicMock()
+        chat_peer_mock = MagicMock()
+        chat_peer_mock.id = 321
+        fixed_now = datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc)
+        checkpoint_timestamp = fixed_now - timedelta(hours=3)
+        checkpoint_mock = MagicMock()
+        checkpoint_mock.preloaded_through_timestamp = checkpoint_timestamp
+        checkpoint_mock.preloaded_through_message_id = None
+
+        with (
+            patch("packages.background_jobs.datetime", wraps=datetime) as datetime_mock,
+            patch(
+                "packages.background_jobs.get_should_ignore_message_chat"
+            ) as ignore_mock,
+            patch(
+                "packages.background_jobs.get_store_message_if_not_exists"
+            ) as store_mock,
+            patch(
+                "packages.background_jobs.build_telegram_peer", new_callable=AsyncMock
+            ) as build_peer_mock,
+            patch(
+                "packages.background_jobs.get_preload_checkpoint"
+            ) as get_checkpoint_mock,
+            patch(
+                "packages.background_jobs.upsert_preload_checkpoint"
+            ) as upsert_checkpoint_mock,
+        ):
+            datetime_mock.now.return_value = fixed_now
+            ignore_mock.return_value = AsyncMock(return_value=False)
+            store_mock.return_value = AsyncMock(return_value=True)
+            build_peer_mock.return_value = chat_peer_mock
+            get_checkpoint_mock.return_value = checkpoint_mock
+
+            await preload_messages(client_mock, session_maker_mock)
+
+            client_mock.iter_messages.assert_called_once_with(
+                entity_mock,
+                reverse=True,
+                offset_date=checkpoint_timestamp,
+            )
+            upsert_checkpoint_mock.assert_called_once_with(
+                chat_peer_id=321,
+                preloaded_through_message_id=None,
+                preloaded_through_timestamp=fixed_now,
+                sqlalchemy_session_maker=session_maker_mock,
+            )
+
+    @patch.dict(
+        "os.environ",
+        {
+            "PRELOAD_MESSAGES": "1",
+            "PRELOAD_MESSAGES_STATUS_REPORT_INTERVAL": "0",
+            "PRELOAD_CHECKPOINTS_ENABLED": "1",
+        },
+    )
+    async def test_ignores_stale_checkpoint_and_uses_ttl_floor(self):
+        client_mock = AsyncMock()
+        client_mock.is_connected = MagicMock(return_value=True)
+        client_mock.is_user_authorized = AsyncMock(return_value=True)
+
+        dialog_mock = MagicMock()
+        dialog_mock.id = 123
+        dialog_mock.input_entity = MagicMock()
+
+        entity_mock = MagicMock()
+        client_mock.get_entity = AsyncMock(return_value=entity_mock)
+
+        async def iter_messages_gen():
+            if False:
+                yield None
+
+        client_mock.iter_messages = MagicMock(return_value=iter_messages_gen())
+
+        async def iter_dialogs_gen():
+            yield dialog_mock
+
+        client_mock.iter_dialogs = iter_dialogs_gen
+
+        session_maker_mock = MagicMock()
+        chat_peer_mock = MagicMock()
+        chat_peer_mock.id = 321
+        fixed_now = datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc)
+        checkpoint_mock = MagicMock()
+        checkpoint_mock.preloaded_through_timestamp = (
+            fixed_now - messages_ttl_delta - timedelta(minutes=1)
+        )
+        checkpoint_mock.preloaded_through_message_id = 55
+
+        with (
+            patch("packages.background_jobs.datetime", wraps=datetime) as datetime_mock,
+            patch(
+                "packages.background_jobs.get_should_ignore_message_chat"
+            ) as ignore_mock,
+            patch(
+                "packages.background_jobs.get_store_message_if_not_exists"
+            ) as store_mock,
+            patch(
+                "packages.background_jobs.build_telegram_peer", new_callable=AsyncMock
+            ) as build_peer_mock,
+            patch(
+                "packages.background_jobs.get_preload_checkpoint"
+            ) as get_checkpoint_mock,
+            patch(
+                "packages.background_jobs.upsert_preload_checkpoint"
+            ) as upsert_checkpoint_mock,
+        ):
+            datetime_mock.now.return_value = fixed_now
+            ignore_mock.return_value = AsyncMock(return_value=False)
+            store_mock.return_value = AsyncMock(return_value=True)
+            build_peer_mock.return_value = chat_peer_mock
+            get_checkpoint_mock.return_value = checkpoint_mock
+
+            await preload_messages(client_mock, session_maker_mock)
+
+            client_mock.iter_messages.assert_called_once_with(
+                entity_mock,
+                reverse=True,
+                offset_date=fixed_now - messages_ttl_delta,
+            )
+            upsert_checkpoint_mock.assert_called_once_with(
+                chat_peer_id=321,
+                preloaded_through_message_id=55,
+                preloaded_through_timestamp=fixed_now,
+                sqlalchemy_session_maker=session_maker_mock,
+            )
+
+    @patch.dict(
+        "os.environ",
+        {
+            "PRELOAD_MESSAGES": "1",
+            "PRELOAD_MESSAGES_STATUS_REPORT_INTERVAL": "0",
+            "PRELOAD_CHECKPOINTS_ENABLED": "1",
+            "PRELOAD_CHECKPOINT_UPDATE_EVERY_MESSAGES": "2",
+        },
+    )
+    async def test_updates_checkpoints_periodically_and_on_completion(self):
+        client_mock = AsyncMock()
+        client_mock.is_connected = MagicMock(return_value=True)
+        client_mock.is_user_authorized = AsyncMock(return_value=True)
+
+        dialog_mock = MagicMock()
+        dialog_mock.id = 123
+        dialog_mock.input_entity = MagicMock()
+
+        entity_mock = MagicMock()
+        client_mock.get_entity = AsyncMock(return_value=entity_mock)
+
+        fixed_now = datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc)
+        message_one = MagicMock(
+            id=1, date=fixed_now - timedelta(hours=3), message="one"
+        )
+        message_two = MagicMock(
+            id=2, date=fixed_now - timedelta(hours=2), message="two"
+        )
+        message_three = MagicMock(
+            id=3, date=fixed_now - timedelta(hours=1), message="three"
+        )
+
+        async def iter_messages_gen():
+            yield message_one
+            yield message_two
+            yield message_three
+
+        client_mock.iter_messages = MagicMock(return_value=iter_messages_gen())
+
+        async def iter_dialogs_gen():
+            yield dialog_mock
+
+        client_mock.iter_dialogs = iter_dialogs_gen
+
+        session_maker_mock = MagicMock()
+        chat_peer_mock = MagicMock()
+        chat_peer_mock.id = 321
+
+        with (
+            patch("packages.background_jobs.datetime", wraps=datetime) as datetime_mock,
+            patch(
+                "packages.background_jobs.get_should_ignore_message_chat"
+            ) as ignore_mock,
+            patch(
+                "packages.background_jobs.get_store_message_if_not_exists"
+            ) as store_mock,
+            patch(
+                "packages.background_jobs.build_telegram_peer", new_callable=AsyncMock
+            ) as build_peer_mock,
+            patch(
+                "packages.background_jobs.get_preload_checkpoint"
+            ) as get_checkpoint_mock,
+            patch(
+                "packages.background_jobs.upsert_preload_checkpoint"
+            ) as upsert_checkpoint_mock,
+        ):
+            datetime_mock.now.return_value = fixed_now
+            ignore_mock.return_value = AsyncMock(return_value=False)
+            store_mock.return_value = AsyncMock(return_value=True)
+            build_peer_mock.return_value = chat_peer_mock
+            get_checkpoint_mock.return_value = None
+
+            await preload_messages(client_mock, session_maker_mock)
+
+            self.assertEqual(upsert_checkpoint_mock.call_count, 2)
+            first_call = upsert_checkpoint_mock.call_args_list[0]
+            self.assertEqual(first_call.kwargs["chat_peer_id"], 321)
+            self.assertEqual(first_call.kwargs["preloaded_through_message_id"], 2)
+            self.assertEqual(
+                first_call.kwargs["preloaded_through_timestamp"], message_two.date
+            )
+            final_call = upsert_checkpoint_mock.call_args_list[-1]
+            self.assertEqual(final_call.kwargs["chat_peer_id"], 321)
+            self.assertEqual(final_call.kwargs["preloaded_through_message_id"], 3)
+            self.assertEqual(
+                final_call.kwargs["preloaded_through_timestamp"], fixed_now
+            )
+
+    @patch.dict(
+        "os.environ",
+        {
+            "PRELOAD_MESSAGES": "1",
+            "PRELOAD_MESSAGES_STATUS_REPORT_INTERVAL": "0",
+            "PRELOAD_CHECKPOINTS_ENABLED": "1",
+        },
+    )
+    async def test_writes_timestamp_only_checkpoint_when_dialog_has_no_messages(self):
+        client_mock = AsyncMock()
+        client_mock.is_connected = MagicMock(return_value=True)
+        client_mock.is_user_authorized = AsyncMock(return_value=True)
+
+        dialog_mock = MagicMock()
+        dialog_mock.id = 123
+        dialog_mock.input_entity = MagicMock()
+
+        entity_mock = MagicMock()
+        client_mock.get_entity = AsyncMock(return_value=entity_mock)
+
+        async def iter_messages_gen():
+            if False:
+                yield None
+
+        client_mock.iter_messages = MagicMock(return_value=iter_messages_gen())
+
+        async def iter_dialogs_gen():
+            yield dialog_mock
+
+        client_mock.iter_dialogs = iter_dialogs_gen
+
+        session_maker_mock = MagicMock()
+        chat_peer_mock = MagicMock()
+        chat_peer_mock.id = 321
+        fixed_now = datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc)
+
+        with (
+            patch("packages.background_jobs.datetime", wraps=datetime) as datetime_mock,
+            patch(
+                "packages.background_jobs.get_should_ignore_message_chat"
+            ) as ignore_mock,
+            patch(
+                "packages.background_jobs.get_store_message_if_not_exists"
+            ) as store_mock,
+            patch(
+                "packages.background_jobs.build_telegram_peer", new_callable=AsyncMock
+            ) as build_peer_mock,
+            patch(
+                "packages.background_jobs.get_preload_checkpoint"
+            ) as get_checkpoint_mock,
+            patch(
+                "packages.background_jobs.upsert_preload_checkpoint"
+            ) as upsert_checkpoint_mock,
+        ):
+            datetime_mock.now.return_value = fixed_now
+            ignore_mock.return_value = AsyncMock(return_value=False)
+            store_mock.return_value = AsyncMock(return_value=True)
+            build_peer_mock.return_value = chat_peer_mock
+            get_checkpoint_mock.return_value = None
+
+            await preload_messages(client_mock, session_maker_mock)
+
+            upsert_checkpoint_mock.assert_called_once_with(
+                chat_peer_id=321,
+                preloaded_through_message_id=None,
+                preloaded_through_timestamp=fixed_now,
+                sqlalchemy_session_maker=session_maker_mock,
+            )
+
+    @patch.dict(
+        "os.environ",
+        {
+            "PRELOAD_MESSAGES": "1",
+            "PRELOAD_MESSAGES_STATUS_REPORT_INTERVAL": "0",
+            "PRELOAD_CHECKPOINTS_ENABLED": "1",
+        },
+    )
+    async def test_completion_checkpoint_timestamp_is_monotonic(self):
+        client_mock = AsyncMock()
+        client_mock.is_connected = MagicMock(return_value=True)
+        client_mock.is_user_authorized = AsyncMock(return_value=True)
+
+        dialog_mock = MagicMock()
+        dialog_mock.id = 123
+        dialog_mock.input_entity = MagicMock()
+
+        entity_mock = MagicMock()
+        client_mock.get_entity = AsyncMock(return_value=entity_mock)
+
+        fixed_now = datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc)
+        future_message_timestamp = fixed_now + timedelta(minutes=1)
+        msg_mock = MagicMock()
+        msg_mock.id = 77
+        msg_mock.date = future_message_timestamp
+        msg_mock.message = "future"
+
+        async def iter_messages_gen():
+            yield msg_mock
+
+        client_mock.iter_messages = MagicMock(return_value=iter_messages_gen())
+
+        async def iter_dialogs_gen():
+            yield dialog_mock
+
+        client_mock.iter_dialogs = iter_dialogs_gen
+
+        session_maker_mock = MagicMock()
+        chat_peer_mock = MagicMock()
+        chat_peer_mock.id = 321
+
+        with (
+            patch("packages.background_jobs.datetime", wraps=datetime) as datetime_mock,
+            patch(
+                "packages.background_jobs.get_should_ignore_message_chat"
+            ) as ignore_mock,
+            patch(
+                "packages.background_jobs.get_store_message_if_not_exists"
+            ) as store_mock,
+            patch(
+                "packages.background_jobs.build_telegram_peer", new_callable=AsyncMock
+            ) as build_peer_mock,
+            patch(
+                "packages.background_jobs.get_preload_checkpoint"
+            ) as get_checkpoint_mock,
+            patch(
+                "packages.background_jobs.upsert_preload_checkpoint"
+            ) as upsert_checkpoint_mock,
+        ):
+            datetime_mock.now.return_value = fixed_now
+            ignore_mock.return_value = AsyncMock(return_value=False)
+            store_mock.return_value = AsyncMock(return_value=True)
+            build_peer_mock.return_value = chat_peer_mock
+            get_checkpoint_mock.return_value = None
+
+            await preload_messages(client_mock, session_maker_mock)
+
+            upsert_checkpoint_mock.assert_called_once_with(
+                chat_peer_id=321,
+                preloaded_through_message_id=77,
+                preloaded_through_timestamp=future_message_timestamp,
+                sqlalchemy_session_maker=session_maker_mock,
+            )
+
+    @patch.dict(
+        "os.environ",
+        {
+            "PRELOAD_MESSAGES": "1",
+            "PRELOAD_MESSAGES_STATUS_REPORT_INTERVAL": "0",
+            "PRELOAD_CHECKPOINTS_ENABLED": "0",
+        },
+    )
+    async def test_does_not_use_checkpoints_when_disabled(self):
+        client_mock = AsyncMock()
+        client_mock.is_connected = MagicMock(return_value=True)
+        client_mock.is_user_authorized = AsyncMock(return_value=True)
+
+        dialog_mock = MagicMock()
+        dialog_mock.id = 123
+        dialog_mock.input_entity = MagicMock()
+
+        entity_mock = MagicMock()
+        client_mock.get_entity = AsyncMock(return_value=entity_mock)
+        fixed_now = datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc)
+
+        async def iter_messages_gen():
+            if False:
+                yield None
+
+        client_mock.iter_messages = MagicMock(return_value=iter_messages_gen())
 
         async def iter_dialogs_gen():
             yield dialog_mock
@@ -236,19 +778,38 @@ class PreloadMessagesTests(unittest.IsolatedAsyncioTestCase):
 
         session_maker_mock = MagicMock()
 
-        with patch(
-            "packages.background_jobs.get_should_ignore_message_chat",
-        ) as ignore_mock:
-            ignore_fn = AsyncMock(return_value=False)
-            ignore_mock.return_value = ignore_fn
+        with (
+            patch("packages.background_jobs.datetime", wraps=datetime) as datetime_mock,
+            patch(
+                "packages.background_jobs.get_should_ignore_message_chat"
+            ) as ignore_mock,
+            patch(
+                "packages.background_jobs.get_store_message_if_not_exists"
+            ) as store_mock,
+            patch(
+                "packages.background_jobs.build_telegram_peer", new_callable=AsyncMock
+            ) as build_peer_mock,
+            patch(
+                "packages.background_jobs.get_preload_checkpoint"
+            ) as get_checkpoint_mock,
+            patch(
+                "packages.background_jobs.upsert_preload_checkpoint"
+            ) as upsert_checkpoint_mock,
+        ):
+            datetime_mock.now.return_value = fixed_now
+            ignore_mock.return_value = AsyncMock(return_value=False)
+            store_mock.return_value = AsyncMock(return_value=True)
 
-            with patch(
-                "packages.background_jobs.get_store_message_if_not_exists",
-            ) as store_mock:
-                store_fn = AsyncMock(return_value=True)
-                store_mock.return_value = store_fn
+            await preload_messages(client_mock, session_maker_mock)
 
-                await preload_messages(client_mock, session_maker_mock)
+            client_mock.iter_messages.assert_called_once_with(
+                entity_mock,
+                reverse=True,
+                offset_date=fixed_now - messages_ttl_delta,
+            )
+            build_peer_mock.assert_not_called()
+            get_checkpoint_mock.assert_not_called()
+            upsert_checkpoint_mock.assert_not_called()
 
 
 class GatherWithConcurrencyTests(unittest.IsolatedAsyncioTestCase):
@@ -294,7 +855,11 @@ class MessagesTtlDeltaTests(unittest.TestCase):
 class PreloadMessagesIgnoredDialogTests(unittest.IsolatedAsyncioTestCase):
     @patch.dict(
         "os.environ",
-        {"PRELOAD_MESSAGES": "1", "PRELOAD_MESSAGES_STATUS_REPORT_INTERVAL": "0"},
+        {
+            "PRELOAD_MESSAGES": "1",
+            "PRELOAD_MESSAGES_STATUS_REPORT_INTERVAL": "0",
+            "PRELOAD_CHECKPOINTS_ENABLED": "1",
+        },
     )
     async def test_skips_ignored_dialog(self):
         client_mock = AsyncMock()
@@ -321,9 +886,21 @@ class PreloadMessagesIgnoredDialogTests(unittest.IsolatedAsyncioTestCase):
             ignore_fn = AsyncMock(return_value=True)
             ignore_mock.return_value = ignore_fn
 
-            with patch(
-                "packages.background_jobs.get_store_message_if_not_exists",
-            ) as store_mock:
+            with (
+                patch(
+                    "packages.background_jobs.get_store_message_if_not_exists"
+                ) as store_mock,
+                patch(
+                    "packages.background_jobs.build_telegram_peer",
+                    new_callable=AsyncMock,
+                ) as build_peer_mock,
+                patch(
+                    "packages.background_jobs.get_preload_checkpoint"
+                ) as get_checkpoint_mock,
+                patch(
+                    "packages.background_jobs.upsert_preload_checkpoint"
+                ) as upsert_checkpoint_mock,
+            ):
                 store_fn = AsyncMock(return_value=True)
                 store_mock.return_value = store_fn
 
@@ -331,6 +908,9 @@ class PreloadMessagesIgnoredDialogTests(unittest.IsolatedAsyncioTestCase):
 
                 ignore_fn.assert_called_once_with(entity_mock)
                 store_fn.assert_not_called()
+                build_peer_mock.assert_not_called()
+                get_checkpoint_mock.assert_not_called()
+                upsert_checkpoint_mock.assert_not_called()
 
 
 if __name__ == "__main__":

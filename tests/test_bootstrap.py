@@ -256,9 +256,10 @@ class ConfigureBotTests(unittest.IsolatedAsyncioTestCase):
             result = await configure_bot(
                 container_mock, "api_id", "api_hash", "me", "session1"
             )
-            notify_del, notify_unknown, bot = result
+            notify_del, notify_unknown, notify_edit, bot = result
             self.assertIsNone(notify_del)
             self.assertIsNone(notify_unknown)
+            self.assertIsNone(notify_edit)
             self.assertIsNone(bot)
 
     @patch("packages.bootstrap.os._exit", side_effect=SystemExit)
@@ -291,7 +292,7 @@ class ConfigureBotTests(unittest.IsolatedAsyncioTestCase):
         bot_instance.__aexit__ = AsyncMock()
         mock_bot_class.return_value = bot_instance
 
-        notify_del, notify_unknown, bot = await configure_bot(
+        notify_del, notify_unknown, notify_edit, bot = await configure_bot(
             container_mock, "12345", "api_hash", "12345", "session1"
         )
 
@@ -301,6 +302,7 @@ class ConfigureBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[1], "12345")
         self.assertEqual(args[2], "api_hash")
         self.assertEqual(args[3], "test_token")
+        self.assertTrue(callable(notify_edit))
         self.assertIn("session_maker", kwargs)
         session_maker = kwargs["session_maker"]
         self.assertTrue(callable(session_maker))

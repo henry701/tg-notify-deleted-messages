@@ -153,6 +153,7 @@ async def configure_bot(
     telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     configured_notify_message_deletion = None
     configured_notify_unknown_message = None
+    configured_notify_message_edit = None
     bot = None
     if telegram_bot_token is not None:
         if target_chat is None or target_chat == "me":

@@ -95,11 +95,11 @@ class BotAssistant:
                 (await get_mention_text(client, message.from_peer))
                 if message.from_peer
                 else "Unknown",
-                (str(message.from_peer.id) if message.from_peer else "0"),
+                (str(message.from_peer.peer_id) if message.from_peer else "0"),
                 (await get_mention_text(client, message.chat_peer))
                 if message.chat_peer
                 else "Unknown",
-                (str(message.chat_peer.id) if message.chat_peer else "0"),
+                (str(message.chat_peer.peer_id) if message.chat_peer else "0"),
                 message.text or "",
             ),
             file=message.media,

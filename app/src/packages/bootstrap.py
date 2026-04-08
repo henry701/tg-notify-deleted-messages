@@ -175,8 +175,14 @@ async def configure_bot(
         await bot.__aenter__()
         configured_notify_message_deletion = bot.notify_message_deletion
         configured_notify_unknown_message = bot.notify_unknown_message
+        configured_notify_message_edit = bot.notify_message_edit
     logger.info("Configured Bot")
-    return configured_notify_message_deletion, configured_notify_unknown_message, bot
+    return (
+        configured_notify_message_deletion,
+        configured_notify_unknown_message,
+        configured_notify_message_edit,
+        bot,
+    )
 
 
 async def client_main_loop_job(
@@ -370,15 +376,18 @@ def create_app_and_start_jobs() -> tuple:
 
     session_id = require_env("SESSION_ID")
 
-    configured_notify_message_deletion, configured_notify_unknown_message, bot = (
-        loop.run_until_complete(
-            configure_bot(
-                alchemy_telegram_container,
-                telegram_api_id,
-                telegram_api_hash,
-                target_chat,
-                session_id,
-            )
+    (
+        configured_notify_message_deletion,
+        configured_notify_unknown_message,
+        configured_notify_message_edit,
+        bot,
+    ) = loop.run_until_complete(
+        configure_bot(
+            alchemy_telegram_container,
+            telegram_api_id,
+            telegram_api_hash,
+            target_chat,
+            session_id,
         )
     )
     closer.bot = bot

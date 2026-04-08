@@ -10,6 +10,7 @@ from packages.models.root.TelegramMessage import TelegramMessage
 from packages.telegram_helpers import (
     format_default_message_text,
     format_default_unknown_message_text,
+    get_mention_text,
 )
 
 
@@ -79,6 +80,29 @@ class BotAssistant:
             message=await format_default_unknown_message_text(
                 client, message_ids, event
             ),
+        )
+
+    async def notify_message_edit(
+        self, message: TelegramMessage, client: TelegramClient
+    ):
+        logging.debug("bot_assistant notify_message_edit")
+        self.throw_if_uninitialized()
+        assert self.client is not None
+        logging.debug("bot_assistant notify_message_edit send_message")
+        await self.client.send_message(
+            entity=self.target_chat,
+            message="**Edited message** from: [{}](tg://user?id={}) on chat [{}](tg://chat?id={})\n**New Text:** {}".format(
+                (await get_mention_text(client, message.from_peer))
+                if message.from_peer
+                else "Unknown",
+                (str(message.from_peer.peer_id) if message.from_peer else "0"),
+                (await get_mention_text(client, message.chat_peer))
+                if message.chat_peer
+                else "Unknown",
+                (str(message.chat_peer.peer_id) if message.chat_peer else "0"),
+                message.text or "",
+            ),
+            file=message.media,
         )
 
     def throw_if_uninitialized(self):

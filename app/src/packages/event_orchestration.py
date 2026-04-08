@@ -172,14 +172,20 @@ def get_on_new_message(sqlalchemy_session_maker: sessionmaker, client: TelegramC
         stop=stop_after_attempt(3),
     )
     async def on_new_message(event: NewMessage.Event):
-        effective_level = logger.getEffectiveLevel()
-        if effective_level <= 5:
-            logger.log(5, f"on_new_message: {event}")
-        else:
-            logger.debug("in on_new_message")
-        message: telethon.tl.custom.message.Message = event.message
-        await store_message_if_not_exists(message)
-        await update_last_activity()
+        try:
+            effective_level = logger.getEffectiveLevel()
+            if effective_level <= 5:
+                logger.log(5, f"on_new_message: {event}")
+            else:
+                logger.debug("in on_new_message")
+            message: telethon.tl.custom.message.Message = event.message
+            await store_message_if_not_exists(message)
+            await update_last_activity()
+        except Exception as e:
+            logger.error(
+                f"Error in on_new_message handler: {e}",
+                exc_info=True,
+            )
 
     return on_new_message
 
@@ -209,80 +215,118 @@ def get_on_message_edited(
         stop=stop_after_attempt(3),
     )
     async def on_message_edited(event: MessageEdited.Event):
-        edited_messages_count = 1
-
-        if edited_messages_count == 0:
-            logger.debug("Got empty edited message event. Returning early!")
-            return
-
-        chat = None
         try:
-            input_chat = await event.get_input_chat()
-            chat = await client.get_entity(input_chat) if input_chat else None
-        except ValueError:
-            pass
+            message_id = None
+            if event.message is not None:
+                message_id = event.message.id
+            elif hasattr(event, "message_id") and event.message_id is not None:
+                message_id = event.message_id
+            else:
+                logger.debug("Got empty message in edited event. Returning early!")
+                return
 
-        with sqlalchemy_session_maker.begin() as sqlalchemy_session:
-            (
-                messages,
-                query,
-                unloaded_ids,
-                filtered_away_ids,
-            ) = await load_messages_by_parameters(
-                [event.message_id],
-                chat,
-                client,
-                sqlalchemy_session,
-                ignore_channels,
-                ignore_groups,
-                ignore_megagroups,
-                ignore_gigagroups,
-                member_ignore_threshold,
-                should_notify_outgoing_messages,
-            )
+            edited_messages_count = 1
 
-        edited_messages_count_str = str(edited_messages_count)
-        db_messages_count = len(messages)
-        db_messages_count_str = str(db_messages_count)
-        filtered_away_messages_count = len(filtered_away_ids)
-        filtered_away_messages_count_str = str(filtered_away_messages_count)
+            if edited_messages_count == 0:
+                logger.debug("Got empty edited message event. Returning early!")
+                return
 
-        logger.info(
-            f"Got {edited_messages_count_str} edited message. Has matching in DB: {db_messages_count_str}. Filtered away: {filtered_away_messages_count_str}"
-        )
-
-        if edited_messages_count > db_messages_count + filtered_away_messages_count:
+            chat = None
             try:
-                logger.warning(
-                    "Got {edited_messages_count} edited messages but only found {db_messages_count} (with {filtered_away_messages_count} filtered away) matching in database! Query: {query_str}".format(
-                        edited_messages_count=edited_messages_count_str,
-                        db_messages_count=db_messages_count_str,
-                        filtered_away_messages_count=filtered_away_messages_count_str,
-                        query_str=str(
-                            query.compile(compile_kwargs={"literal_binds": True})
-                        )
-                        if query is not None
-                        else "(no query)",
-                    )
-                )
-            except Exception as e:
-                logger.error(
-                    f"Error while logging missing edited message (has {db_messages_count_str} of {edited_messages_count_str}, with {filtered_away_messages_count_str} filtered away): {e}",
-                    exc_info=True,
+                input_chat = await event.get_input_chat()
+                chat = await client.get_entity(input_chat) if input_chat else None
+            except ValueError:
+                pass
+
+            with sqlalchemy_session_maker.begin() as sqlalchemy_session:
+                (
+                    messages,
+                    query,
+                    unloaded_ids,
+                    filtered_away_ids,
+                ) = await load_messages_by_parameters(
+                    [message_id],
+                    chat,
+                    client,
+                    sqlalchemy_session,
+                    ignore_channels,
+                    ignore_groups,
+                    ignore_megagroups,
+                    ignore_gigagroups,
+                    member_ignore_threshold,
+                    should_notify_outgoing_messages,
                 )
 
-        awaitables: list[Awaitable[Any]] = []
-        for message in messages:
-            awaitables.append(notify_message_edit(message, client))
-        if unloaded_ids and len(unloaded_ids):
-            pass
-        if len(awaitables) > 0:
-            await gather_with_concurrency_func(
-                edited_messages_notification_concurrency, *awaitables
+            edited_messages_count_str = str(edited_messages_count)
+            db_messages_count = len(messages)
+            db_messages_count_str = str(db_messages_count)
+            filtered_away_messages_count = len(filtered_away_ids)
+            filtered_away_messages_count_str = str(filtered_away_messages_count)
+
+            logger.info(
+                f"Got {edited_messages_count_str} edited message. Has matching in DB: {db_messages_count_str}. Filtered away: {filtered_away_messages_count_str}"
             )
 
-        if hasattr(event, "message") and event.message:
-            await store_message_for_edit(event.message, check_chat=False)
+            if edited_messages_count > db_messages_count + filtered_away_messages_count:
+                try:
+                    logger.warning(
+                        "Got {edited_messages_count} edited messages but only found {db_messages_count} (with {filtered_away_messages_count} filtered away) matching in database! Query: {query_str}".format(
+                            edited_messages_count=edited_messages_count_str,
+                            db_messages_count=db_messages_count_str,
+                            filtered_away_messages_count=filtered_away_messages_count_str,
+                            query_str=str(
+                                query.compile(compile_kwargs={"literal_binds": True})
+                            )
+                            if query is not None
+                            else "(no query)",
+                        )
+                    )
+                    if event.message is not None:
+                        msg_text = getattr(event.message, "text", None)
+                        if msg_text:
+                            logger.log(
+                                5, f"Edited message text (not found in DB): {msg_text}"
+                            )
+                except Exception as e:
+                    logger.error(
+                        f"Error while logging missing edited message (has {db_messages_count_str} of {edited_messages_count_str}, with {filtered_away_messages_count_str} filtered away): {e}",
+                        exc_info=True,
+                    )
+
+            awaitables: list[Awaitable[Any]] = []
+            new_text = None
+            if event.message:
+                new_text = getattr(event.message, "text", None)
+
+            should_skip_edit = False
+            if new_text is not None and messages:
+                db_text = messages[0].text or "" if messages else ""
+                if db_text == new_text:
+                    logger.debug(
+                        "Edit event with same text, likely reaction. Skipping notification."
+                    )
+                    should_skip_edit = True
+
+            if not should_skip_edit:
+                for message in messages:
+                    old_text = message.text or ""
+                    if new_text:
+                        message.text = f"**OLD:** {old_text}\n**NEW:** {new_text}"
+                    awaitables.append(notify_message_edit(message, client))
+            if unloaded_ids and len(unloaded_ids):
+                pass
+            if len(awaitables) > 0:
+                await gather_with_concurrency_func(
+                    edited_messages_notification_concurrency, *awaitables
+                )
+
+            if hasattr(event, "message") and event.message:
+                await store_message_for_edit(event.message, check_chat=False)
+        except Exception as e:
+            logger.error(
+                f"Error in on_message_edited handler: {e}",
+                exc_info=True,
+            )
 
     return on_message_edited
 
@@ -420,11 +464,15 @@ async def add_event_handlers(
     gather_with_concurrency_func: Callable,
 ):
     logger.info("Adding event handlers")
-    new_message_event = events.NewMessage(incoming=True, outgoing=True)
+    new_message_event = events.NewMessage()
+    new_message_handler = get_on_new_message(
+        sqlalchemy_session_maker=sqlalchemy_session_maker, client=client
+    )
+    logger.info(
+        f"Registering NewMessage handler: {new_message_handler}, event: {new_message_event}"
+    )
     client.add_event_handler(
-        get_on_new_message(
-            sqlalchemy_session_maker=sqlalchemy_session_maker, client=client
-        ),
+        new_message_handler,
         new_message_event,
     )
     client.add_event_handler(

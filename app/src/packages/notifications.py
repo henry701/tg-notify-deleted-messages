@@ -7,6 +7,7 @@ from telethon.events.messagedeleted import MessageDeleted
 
 from packages.models.root.TelegramMessage import TelegramMessage
 from packages.telegram_helpers import (
+    format_default_message_edit_text,
     format_default_message_text,
     format_default_unknown_message_text,
 )
@@ -62,8 +63,7 @@ def get_base_notify_message_edit(
     async def base_notify_message_edit(
         message: TelegramMessage, client: TelegramClient
     ):
-        with sqlalchemy_session_maker.begin() as session:
-            session.merge(message)
+        return None
 
     return base_notify_message_edit
 
@@ -76,17 +76,7 @@ def get_default_notify_message_edit() -> Callable[
     ):
         await client.send_message(
             entity="me",
-            message="**Edited message** from: [{}](tg://user?id={}) on chat [{}](tg::chat?id={})\n**New Text:** {}".format(
-                (await get_mention_text(client, message.from_peer))
-                if message.from_peer
-                else "Unknown",
-                (str(message.from_peer.peer_id) if message.from_peer else "0"),
-                (await get_mention_text(client, message.chat_peer))
-                if message.chat_peer
-                else "Unknown",
-                (str(message.chat_peer.peer_id) if message.chat_peer else "0"),
-                message.text or "",
-            ),
+            message=await format_default_message_edit_text(client, message),
             file=message.media,  # type: ignore
         )
 

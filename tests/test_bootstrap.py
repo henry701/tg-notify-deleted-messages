@@ -499,5 +499,85 @@ class WorkerFunctionTests(unittest.TestCase):
         mock_exit.assert_any_call(1)
 
 
+class CreateAppAndStartJobsTests(unittest.TestCase):
+    def test_passes_configured_edit_notifier_to_main_loop_job(self):
+        from packages.bootstrap import create_app_and_start_jobs
+
+        test_loop = asyncio.new_event_loop()
+        notify_del = MagicMock(name="notify_del")
+        notify_unknown = MagicMock(name="notify_unknown")
+        notify_edit = MagicMock(name="notify_edit")
+        bot_mock = AsyncMock()
+        bot_mock.__aexit__ = AsyncMock()
+        client_mock = AsyncMock()
+        client_mock.disconnect = AsyncMock()
+        sessionmaker_mock = MagicMock(name="sessionmaker_mock")
+        container_mock = MagicMock(name="alchemy_container")
+        future_mock = MagicMock(name="main_loop_future")
+        flask_app_mock = MagicMock(name="flask_app")
+
+        def make_thread_side_effect(*args, **kwargs):
+            closer = kwargs["args"][1]
+            closer.stop_event = asyncio.Event()
+            closer.started_event = asyncio.Event()
+            thread_mock = MagicMock()
+            thread_mock.is_alive.return_value = True
+            thread_mock.start.return_value = None
+            return thread_mock
+
+        def run_coro_side_effect(coro, loop):
+            coro.close()
+            return future_mock
+
+        with (
+            patch(
+                "packages.bootstrap.asyncio.events.new_event_loop",
+                return_value=test_loop,
+            ),
+            patch("packages.bootstrap.add_signal_handlers"),
+            patch("sqlalchemy.orm.sessionmaker", return_value=sessionmaker_mock),
+            patch("packages.bootstrap.AlchemySessionContainer", return_value=container_mock),
+            patch("packages.db_helpers.get_db_url", return_value="sqlite:///:memory:"),
+            patch("packages.db_bootstrap.create_engine", return_value=MagicMock()),
+            patch("packages.db_helpers.create_database"),
+            patch(
+                "packages.env_helpers.require_env",
+                side_effect=["api_id", "api_hash", "session_id"],
+            ),
+            patch(
+                "packages.bootstrap.configure_bot",
+                new_callable=AsyncMock,
+                return_value=(notify_del, notify_unknown, notify_edit, bot_mock),
+            ),
+            patch(
+                "packages.bootstrap.make_client",
+                new_callable=AsyncMock,
+                return_value=client_mock,
+            ),
+            patch("packages.bootstrap.threading.Thread", side_effect=make_thread_side_effect),
+            patch(
+                "packages.bootstrap.client_main_loop_job",
+                new_callable=AsyncMock,
+                return_value=None,
+            ) as client_main_loop_job_mock,
+            patch(
+                "packages.bootstrap.asyncio.run_coroutine_threadsafe",
+                side_effect=run_coro_side_effect,
+            ),
+            patch("packages.http.create_app", return_value=flask_app_mock),
+        ):
+            flask_app, sync_closer = create_app_and_start_jobs()
+
+        self.assertIs(flask_app, flask_app_mock)
+        self.assertIs(client_main_loop_job_mock.call_args.args[5], notify_edit)
+
+        with (
+            patch("packages.bootstrap.is_exiting", False),
+            patch("packages.bootstrap.asyncio.all_tasks", return_value=set()),
+        ):
+            sync_closer()
+        test_loop.close()
+
+
 if __name__ == "__main__":
     unittest.main()

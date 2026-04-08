@@ -68,6 +68,25 @@ class BotAssistantNotifyTests(unittest.IsolatedAsyncioTestCase):
             await bot.notify_unknown_message([1, 2, 3], event_mock, client_mock)
             bot.client.send_message.assert_called_once()
 
+    async def test_notify_message_edit(self):
+        bot = BotAssistant("target-chat", 123, "hash", "token", MagicMock())
+        bot.client = AsyncMock()
+        message_mock = MagicMock()
+        message_mock.media = None
+        client_mock = AsyncMock()
+
+        with patch(
+            "packages.bot_assistant.format_default_message_edit_text",
+            new_callable=AsyncMock,
+        ) as fmt_mock:
+            fmt_mock.return_value = "formatted edit"
+            await bot.notify_message_edit(message_mock, client_mock)
+            bot.client.send_message.assert_called_once_with(
+                entity="target-chat",
+                message="formatted edit",
+                file=None,
+            )
+
     async def test_notify_raises_when_uninitialized(self):
         bot = BotAssistant("me", 123, "hash", "token", MagicMock())
         bot.client = None

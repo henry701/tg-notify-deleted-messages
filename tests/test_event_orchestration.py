@@ -581,9 +581,9 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
 
         gather_func.assert_called_once()
         notify_edit.assert_called_once()
-        called_text = notify_edit.call_args[0][0].text
-        self.assertIn("OLD:", called_text)
-        self.assertIn("NEW:", called_text)
+        called_message = notify_edit.call_args[0][0]
+        self.assertEqual(called_message.edit_old_text, "old text")
+        self.assertEqual(called_message.text, "new text")
 
     @patch.dict(
         "os.environ",

@@ -109,8 +109,10 @@ async def build_peer_entity(peer: TelegramPeer, client: TelegramClient):
     return await client.get_entity(input_peer)
 
 
-async def format_default_message_text(
-    client: TelegramClient, message: TelegramMessage, tried: bool = False
+async def get_message_user_and_chat_entities(
+    client: TelegramClient,
+    message: TelegramMessage,
+    tried: bool = False,
 ):
     try:
         user = (
@@ -123,13 +125,22 @@ async def format_default_message_text(
             if message.chat_peer
             else None
         )
+        return (user, chat)
     except ValueError:
         if tried:
             raise
         await refresh_client(client)
-        return await format_default_message_text(
+        return await get_message_user_and_chat_entities(
             client=client, message=message, tried=True
         )
+
+
+async def format_default_message_text(
+    client: TelegramClient, message: TelegramMessage, tried: bool = False
+):
+    user, chat = await get_message_user_and_chat_entities(
+        client=client, message=message, tried=tried
+    )
     mention_username = await get_mention_text(user)
     mention_chatname = await get_mention_text(chat)
     text = "**Deleted message** from: [{username}](tg://user?id={userid}) on chat [{chatname}](tg://chat?id={chatid})\n".format(
@@ -141,6 +152,26 @@ async def format_default_message_text(
     if message.text:
         text += "**Message Text:** " + message.text
     return text
+
+
+async def format_default_message_edit_text(
+    client: TelegramClient, message: TelegramMessage, tried: bool = False
+) -> str:
+    user, chat = await get_message_user_and_chat_entities(
+        client=client, message=message, tried=tried
+    )
+    mention_username = await get_mention_text(user)
+    mention_chatname = await get_mention_text(chat)
+    old_text = getattr(message, "edit_old_text", "") or ""
+    new_text = message.text or ""
+    return "**Edited message** from: [{username}](tg://user?id={userid}) on chat [{chatname}](tg://chat?id={chatid})\n**Old Text:** {old_text}\n**New Text:** {new_text}".format(
+        username=mention_username,
+        userid=(str(user.id) if user else "0"),
+        chatname=mention_chatname,
+        chatid=(str(chat.id) if chat else "0"),
+        old_text=old_text,
+        new_text=new_text,
+    )
 
 
 async def format_default_unknown_message_text(

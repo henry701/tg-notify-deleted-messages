@@ -428,7 +428,7 @@ def create_app_and_start_jobs() -> tuple:
             sqlalchemy_session_maker,
             configured_notify_message_deletion,
             configured_notify_unknown_message,
-            None,
+            configured_notify_message_edit,
             client,
             gather_with_concurrency,
         ),

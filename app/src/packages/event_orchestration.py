@@ -1,6 +1,7 @@
 """Event handlers and message storage orchestration."""
 
 import asyncio
+import copy
 import logging
 import os
 from collections.abc import Awaitable, Callable
@@ -310,9 +311,12 @@ def get_on_message_edited(
             if not should_skip_edit:
                 for message in messages:
                     old_text = message.text or ""
-                    if new_text:
-                        message.text = f"**OLD:** {old_text}\n**NEW:** {new_text}"
-                    awaitables.append(notify_message_edit(message, client))
+                    notification_message = copy.copy(message)
+                    notification_message.text = (
+                        new_text if new_text is not None else old_text
+                    )
+                    notification_message.edit_old_text = old_text
+                    awaitables.append(notify_message_edit(notification_message, client))
             if unloaded_ids and len(unloaded_ids):
                 pass
             if len(awaitables) > 0:

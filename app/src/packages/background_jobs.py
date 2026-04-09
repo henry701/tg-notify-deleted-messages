@@ -128,6 +128,7 @@ async def preload_messages(
         last_processed_message_id = None
         last_processed_message_timestamp = None
         uncheckpointed_messages = 0
+        resumed_from_valid_checkpoint_id = False
 
         if checkpoints_enabled:
             dialog_chat_peer = await build_telegram_peer(
@@ -142,6 +143,7 @@ async def preload_messages(
                 and checkpoint.preloaded_through_timestamp >= min_message_date
             ):
                 if checkpoint.preloaded_through_message_id is not None:
+                    resumed_from_valid_checkpoint_id = True
                     checkpoint_kwargs["min_id"] = int(
                         str(checkpoint.preloaded_through_message_id)
                     )
@@ -190,7 +192,11 @@ async def preload_messages(
         if checkpoints_enabled and dialog_chat_peer is not None:
             completion_message_id = last_processed_message_id
             completion_timestamp = dialog_scan_started_at
-            if completion_message_id is None and checkpoint is not None:
+            if (
+                completion_message_id is None
+                and checkpoint is not None
+                and resumed_from_valid_checkpoint_id
+            ):
                 if checkpoint.preloaded_through_message_id is not None:
                     completion_message_id = int(
                         str(checkpoint.preloaded_through_message_id)

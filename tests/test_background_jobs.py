@@ -508,7 +508,7 @@ class PreloadMessagesTests(unittest.IsolatedAsyncioTestCase):
             )
             upsert_checkpoint_mock.assert_called_once_with(
                 chat_peer_id=321,
-                preloaded_through_message_id=55,
+                preloaded_through_message_id=None,
                 preloaded_through_timestamp=fixed_now,
                 sqlalchemy_session_maker=session_maker_mock,
             )

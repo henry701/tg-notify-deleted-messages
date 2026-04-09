@@ -4,11 +4,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from packages.models.root.TelegramPeer import TelegramPeer
 from packages.models.support.PeerType import PeerType
 from packages.telegram_helpers import (
+    build_chat_link,
     build_peer_entity,
     build_telegram_peer,
     format_default_message_edit_text,
     format_default_message_text,
     format_default_unknown_message_text,
+    get_canonical_message_text,
     get_mention_text,
     refresh_client,
     to_telethon_input_peer,
@@ -109,6 +111,56 @@ class GetMentionTextTests(unittest.IsolatedAsyncioTestCase):
         entity.chat_id = None
         result = await get_mention_text(entity)
         self.assertIn("UNKNOWN", result)
+
+
+class GetCanonicalMessageTextTests(unittest.TestCase):
+    def test_prefers_raw_text_over_formatted_text(self):
+        message = MagicMock()
+        message.raw_text = "plain text"
+        message.message = "plain text"
+        message.text = "**plain text**"
+
+        result = get_canonical_message_text(message)
+
+        self.assertEqual(result, "plain text")
+
+    def test_returns_empty_string_when_no_text_is_available(self):
+        message = MagicMock()
+        message.raw_text = None
+        message.message = None
+        message.text = None
+
+        result = get_canonical_message_text(message)
+
+        self.assertEqual(result, "")
+
+
+class BuildChatLinkTests(unittest.TestCase):
+    def test_builds_private_post_link_for_private_channels(self):
+        entity = MagicMock()
+        entity.username = None
+        entity.id = 200
+        entity.phone = None
+        entity.broadcast = None
+        entity.megagroup = True
+        entity.title = "Private Channel"
+
+        result = build_chat_link(entity, message_id=10)
+
+        self.assertEqual(result, "tg://privatepost?channel=200&post=10")
+
+    def test_builds_domain_link_without_post_for_direct_message_users(self):
+        entity = MagicMock()
+        entity.username = "deletedmessagesbot"
+        entity.id = 300
+        entity.phone = None
+        entity.broadcast = None
+        entity.megagroup = None
+        entity.title = None
+
+        result = build_chat_link(entity, message_id=15)
+
+        self.assertEqual(result, "tg://resolve?domain=deletedmessagesbot")
 
 
 class ToTelethonInputPeerTests(unittest.TestCase):
@@ -354,6 +406,7 @@ class FormatDefaultMessageTextTests(unittest.IsolatedAsyncioTestCase):
         chat_entity.username = None
         chat_entity.phone = None
         chat_entity.chat_id = None
+        chat_entity.megagroup = True
 
         client.get_entity.side_effect = [user_entity, chat_entity]
 
@@ -377,6 +430,7 @@ class FormatDefaultMessageTextTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("John Doe", result)
         self.assertIn("Test Chat", result)
         self.assertIn("Hello", result)
+        self.assertIn("tg://privatepost?channel=200&post=1", result)
 
     async def test_formats_message_with_no_text(self):
         from packages.models.root.TelegramMessage import TelegramMessage
@@ -401,6 +455,7 @@ class FormatDefaultMessageTextTests(unittest.IsolatedAsyncioTestCase):
         chat_entity.username = None
         chat_entity.phone = None
         chat_entity.chat_id = None
+        chat_entity.megagroup = False
 
         client.get_entity.side_effect = [user_entity, chat_entity]
 
@@ -423,6 +478,7 @@ class FormatDefaultMessageTextTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("Deleted message", result)
         self.assertNotIn("**Message Text:**", result)
+        self.assertNotIn("tg://chat?id=", result)
 
     async def test_raises_on_second_valueerror(self):
         from packages.models.root.TelegramMessage import TelegramMessage
@@ -478,6 +534,7 @@ class FormatDefaultMessageEditTextTests(unittest.IsolatedAsyncioTestCase):
         chat_entity.username = None
         chat_entity.phone = None
         chat_entity.chat_id = None
+        chat_entity.megagroup = True
 
         client.get_entity.side_effect = [user_entity, chat_entity]
 
@@ -504,7 +561,7 @@ class FormatDefaultMessageEditTextTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Edited Chat", result)
         self.assertIn("previous text", result)
         self.assertIn("updated text", result)
-        self.assertIn("tg://chat?id=200", result)
+        self.assertIn("tg://privatepost?channel=200&post=1", result)
 
 
 class FormatDefaultUnknownMessageTextTests(unittest.IsolatedAsyncioTestCase):

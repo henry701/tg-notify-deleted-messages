@@ -73,6 +73,25 @@ class DbHelpersTests(unittest.TestCase):
             should_encrypt_column_even_if_not_allowed_type(Column("chat_id", Integer()))
         )
 
+    def test_should_not_encrypt_checkpoint_chat_peer_fk_column(self) -> None:
+        metadata = MetaData()
+        Table(
+            "telegram_peers",
+            metadata,
+            Column("id", BigInteger(), primary_key=True, autoincrement=True),
+        )
+        checkpoints = Table(
+            "preload_checkpoints",
+            metadata,
+            Column("chat_peer_id", BigInteger(), ForeignKey("telegram_peers.id")),
+        )
+        self.assertFalse(should_encrypt_column(checkpoints.c.chat_peer_id))
+
+    def test_should_encrypt_checkpoint_message_cursor_identifier(self) -> None:
+        self.assertTrue(
+            should_encrypt_column(Column("preloaded_through_message_id", BigInteger()))
+        )
+
     def test_should_encrypt_column_true_for_large_binary(self) -> None:
         self.assertTrue(should_encrypt_column(Column("data", LargeBinary())))
 

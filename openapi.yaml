@@ -52,3 +52,81 @@ paths:
           description: Logout successful
         '500':
           description: Internal server error
+  /preload_checkpoints:
+    get:
+      summary: List preload checkpoints
+      description: Returns the current per-dialog preload checkpoints stored in the database.
+      responses:
+        '200':
+          description: Checkpoints returned successfully
+  /preload_checkpoints/set:
+    post:
+      summary: Set or overwrite one preload checkpoint
+      description: |
+        Sets a per-dialog preload checkpoint. Target the dialog with either `chat_peer_id`
+        or `peer_id` plus `peer_type`. `timestamp` must be an ISO-8601 datetime with timezone.
+        `message_id` is optional and can be omitted for timestamp-only checkpoints.
+      parameters:
+        - name: chat_peer_id
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: peer_id
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: peer_type
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: timestamp
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: message_id
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Checkpoint stored successfully
+        '400':
+          description: Invalid query parameters
+        '404':
+          description: Peer could not be resolved to a known chat
+  /preload_checkpoints/clear:
+    post:
+      summary: Clear preload checkpoints
+      description: |
+        Clears either all checkpoints or one targeted checkpoint. If no dialog target is
+        provided, all checkpoints are removed. To target one dialog, provide either
+        `chat_peer_id` or `peer_id` plus `peer_type`.
+      parameters:
+        - name: chat_peer_id
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: peer_id
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: peer_type
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Checkpoints cleared successfully
+        '400':
+          description: Invalid query parameters
+        '404':
+          description: Peer could not be resolved to a known chat

@@ -4,6 +4,7 @@ import asyncio
 import concurrent
 import logging
 import os
+from datetime import datetime, timezone
 
 import flask
 import sqlalchemy
@@ -18,8 +19,67 @@ from packages.background_jobs import preload_messages
 from packages.bot_assistant import BotAssistant
 from packages.env_helpers import require_env
 from packages.models.root.TelegramMessage import TelegramMessage
+from packages.models.support.PeerType import PeerType
+from packages.preload_checkpoints import (
+    clear_all_preload_checkpoints,
+    clear_preload_checkpoint,
+    find_chat_peer_id_for_checkpoint_query,
+    list_preload_checkpoints,
+    upsert_preload_checkpoint,
+)
 
 logger = logging.getLogger("tgdel-http")
+
+
+def parse_iso8601_timestamp(value: str) -> datetime:
+    normalized_value = value[:-1] + "+00:00" if value.endswith("Z") else value
+    parsed = datetime.fromisoformat(normalized_value)
+    if parsed.tzinfo is None:
+        raise ValueError("timestamp must include timezone information")
+    return parsed.astimezone(timezone.utc)
+
+
+def parse_peer_type_query_value(value: str) -> PeerType:
+    try:
+        return PeerType(int(value))
+    except (KeyError, TypeError, ValueError):
+        pass
+    try:
+        return PeerType[value.strip().upper()]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid peer_type: {value}") from exc
+
+
+def serialize_preload_checkpoint(checkpoint) -> dict:
+    peer_type_value = (
+        int(checkpoint.chat_peer.type)
+        if checkpoint.chat_peer is not None and checkpoint.chat_peer.type is not None
+        else None
+    )
+    peer_type_name = None
+    if peer_type_value is not None:
+        try:
+            peer_type_name = PeerType(peer_type_value).name
+        except ValueError:
+            peer_type_name = None
+    return {
+        "chat_peer_id": int(checkpoint.chat_peer_id),
+        "peer_id": (
+            int(str(checkpoint.chat_peer.peer_id))
+            if checkpoint.chat_peer is not None
+            and checkpoint.chat_peer.peer_id is not None
+            else None
+        ),
+        "peer_type": peer_type_value,
+        "peer_type_name": peer_type_name,
+        "preloaded_through_message_id": (
+            int(str(checkpoint.preloaded_through_message_id))
+            if checkpoint.preloaded_through_message_id is not None
+            else None
+        ),
+        "preloaded_through_timestamp": checkpoint.preloaded_through_timestamp.isoformat(),
+        "updated_at": checkpoint.updated_at.isoformat(),
+    }
 
 
 def create_app(
@@ -191,6 +251,81 @@ def add_informative_routes(
         if bot is not None and bot.client is not None:
             bot.client.session.save()
         return flask.Response(status=204)
+
+    def resolve_checkpoint_chat_peer_id(require_target: bool) -> int | None:
+        chat_peer_id_value = flask.request.args.get("chat_peer_id")
+        if chat_peer_id_value is not None:
+            resolved_chat_peer_id = find_chat_peer_id_for_checkpoint_query(
+                sqlalchemy_session_maker=sqlalchemy_session_maker,
+                chat_peer_id=int(chat_peer_id_value),
+            )
+            if resolved_chat_peer_id is None:
+                raise LookupError("Unable to resolve peer to a known chat_peer_id.")
+            return resolved_chat_peer_id
+
+        peer_id_value = flask.request.args.get("peer_id")
+        peer_type_value = flask.request.args.get("peer_type")
+        if peer_id_value is None and peer_type_value is None:
+            if require_target:
+                raise ValueError(
+                    "Missing target chat. Provide chat_peer_id or peer_id with peer_type."
+                )
+            return None
+        if peer_id_value is None or peer_type_value is None:
+            raise ValueError("peer_id and peer_type must be provided together.")
+
+        resolved_chat_peer_id = find_chat_peer_id_for_checkpoint_query(
+            sqlalchemy_session_maker=sqlalchemy_session_maker,
+            peer_id=int(peer_id_value),
+            peer_type=parse_peer_type_query_value(peer_type_value),
+        )
+        if resolved_chat_peer_id is None:
+            raise LookupError("Unable to resolve peer to a known chat_peer_id.")
+        return resolved_chat_peer_id
+
+    @flask_app.route("/preload_checkpoints", methods=["GET"])
+    def get_preload_checkpoints():
+        checkpoints = list_preload_checkpoints(sqlalchemy_session_maker)
+        return flask.jsonify(
+            {"checkpoints": [serialize_preload_checkpoint(cp) for cp in checkpoints]}
+        )
+
+    @flask_app.route("/preload_checkpoints/set", methods=["POST"])
+    def set_preload_checkpoint():
+        try:
+            chat_peer_id = resolve_checkpoint_chat_peer_id(require_target=True)
+            timestamp_value = flask.request.args.get("timestamp")
+            if timestamp_value is None:
+                return flask.Response("Missing timestamp query parameter.", status=400)
+            checkpoint = upsert_preload_checkpoint(
+                chat_peer_id=chat_peer_id,
+                preloaded_through_timestamp=parse_iso8601_timestamp(timestamp_value),
+                preloaded_through_message_id=(
+                    int(flask.request.args.get("message_id"))
+                    if flask.request.args.get("message_id") is not None
+                    else None
+                ),
+                sqlalchemy_session_maker=sqlalchemy_session_maker,
+            )
+        except ValueError as exc:
+            return flask.Response(str(exc), status=400)
+        except LookupError as exc:
+            return flask.Response(str(exc), status=404)
+        return flask.jsonify({"checkpoint": serialize_preload_checkpoint(checkpoint)})
+
+    @flask_app.route("/preload_checkpoints/clear", methods=["POST"])
+    def clear_preload_checkpoints():
+        try:
+            chat_peer_id = resolve_checkpoint_chat_peer_id(require_target=False)
+        except ValueError as exc:
+            return flask.Response(str(exc), status=400)
+        except LookupError as exc:
+            return flask.Response(str(exc), status=404)
+        if chat_peer_id is None:
+            deleted = clear_all_preload_checkpoints(sqlalchemy_session_maker)
+            return flask.jsonify({"deleted": deleted})
+        deleted = clear_preload_checkpoint(chat_peer_id, sqlalchemy_session_maker)
+        return flask.jsonify({"chat_peer_id": chat_peer_id, "deleted": deleted})
 
     consecutive_health_failures = 0
     suicide_after_consecutive_health_failures = int(

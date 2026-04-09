@@ -56,6 +56,11 @@ PYTHONPATH=app/src python3 -m unittest discover -s tests -p "integration_*.py" -
 `tg-notify-deleted-messages` stores message history for the time specified
 in the `MESSAGES_TTL_DAYS` environment variable, with default TTL: 14 days.
 
+Preloading can also persist per-dialog checkpoints to avoid rescanning the same
+TTL window on every restart. This behavior is enabled by default through
+`PRELOAD_CHECKPOINTS_ENABLED=1`. The checkpoint flush cadence during preload is
+controlled by `PRELOAD_CHECKPOINT_UPDATE_EVERY_MESSAGES`, with default `100`.
+
 You can change this interval by changing the `.env` file or by defining environment
 variables at the system level.
 

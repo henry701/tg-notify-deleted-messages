@@ -6,6 +6,7 @@ import sqlalchemy
 from packages.db_helpers import create_database
 
 # Import model modules so their table definitions are registered on Base.metadata.
+from packages.models.root.PreloadCheckpoint import PreloadCheckpoint  # noqa: F401
 from packages.models.root.TelegramMessage import TelegramMessage  # noqa: F401
 from packages.models.root.TelegramPeer import TelegramPeer  # noqa: F401
 from sqlalchemy import text
@@ -28,6 +29,20 @@ def bool_from_db(value) -> bool:
     raise TypeError(f"Unsupported boolean value from DB: {value!r}")
 
 
+def datetime_from_db(value) -> datetime:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    if isinstance(value, str):
+        normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    raise TypeError(f"Unsupported datetime value from DB: {value!r}")
+
+
 class DatabaseBackendsIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -44,6 +59,7 @@ class DatabaseBackendsIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self._peer_pk_counter = 10000
         with self.engine.begin() as conn:
+            conn.execute(text("DELETE FROM preload_checkpoints"))
             conn.execute(text("DELETE FROM telegram_messages"))
             conn.execute(text("DELETE FROM telegram_peers"))
 
@@ -180,6 +196,68 @@ class DatabaseBackendsIntegrationTests(unittest.TestCase):
             ).one()
             self.assertEqual(int(remaining_message.id), 9102)
             self.assertEqual(str(remaining_message.text), "new message")
+
+    def test_preload_checkpoint_lifecycle_with_ansi_sql(self) -> None:
+        chat_peer_pk = self._insert_peer(peer_id=3001, access_hash=6001, peer_type=2)
+        checkpoint_timestamp = datetime.now(tz=timezone.utc)
+
+        with self.engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO preload_checkpoints "
+                    "(chat_peer_id, preloaded_through_message_id, preloaded_through_timestamp, updated_at) "
+                    "VALUES (:chat_peer_id, :message_id, :checkpoint_timestamp, :updated_at)"
+                ),
+                {
+                    "chat_peer_id": chat_peer_pk,
+                    "message_id": 9201,
+                    "checkpoint_timestamp": checkpoint_timestamp,
+                    "updated_at": checkpoint_timestamp,
+                },
+            )
+
+            inserted_row = conn.execute(
+                text(
+                    "SELECT preloaded_through_message_id, preloaded_through_timestamp "
+                    "FROM preload_checkpoints WHERE chat_peer_id = :chat_peer_id"
+                ),
+                {"chat_peer_id": chat_peer_pk},
+            ).one()
+            self.assertEqual(int(inserted_row.preloaded_through_message_id), 9201)
+            self.assertEqual(
+                datetime_from_db(inserted_row.preloaded_through_timestamp),
+                checkpoint_timestamp.astimezone(timezone.utc),
+            )
+
+            next_timestamp = checkpoint_timestamp + timedelta(minutes=5)
+            conn.execute(
+                text(
+                    "UPDATE preload_checkpoints SET "
+                    "preloaded_through_message_id = :message_id, "
+                    "preloaded_through_timestamp = :checkpoint_timestamp, "
+                    "updated_at = :updated_at "
+                    "WHERE chat_peer_id = :chat_peer_id"
+                ),
+                {
+                    "chat_peer_id": chat_peer_pk,
+                    "message_id": None,
+                    "checkpoint_timestamp": next_timestamp,
+                    "updated_at": next_timestamp,
+                },
+            )
+
+            updated_row = conn.execute(
+                text(
+                    "SELECT preloaded_through_message_id, preloaded_through_timestamp "
+                    "FROM preload_checkpoints WHERE chat_peer_id = :chat_peer_id"
+                ),
+                {"chat_peer_id": chat_peer_pk},
+            ).one()
+            self.assertIsNone(updated_row.preloaded_through_message_id)
+            self.assertEqual(
+                datetime_from_db(updated_row.preloaded_through_timestamp),
+                next_timestamp.astimezone(timezone.utc),
+            )
 
 
 if __name__ == "__main__":

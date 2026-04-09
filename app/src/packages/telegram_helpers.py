@@ -135,6 +135,53 @@ async def get_message_user_and_chat_entities(
         )
 
 
+def get_canonical_message_text(message) -> str:
+    if message is None:
+        return ""
+    for attribute_name in ("raw_text", "message", "text"):
+        value = getattr(message, attribute_name, None)
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def build_chat_link(entity, message_id: int | None = None) -> str | None:
+    if entity is None:
+        return None
+    peer_type = PeerType.from_type(type(entity))
+    username = getattr(entity, "username", None)
+    entity_id = getattr(entity, "id", None)
+    is_channel_like = (
+        peer_type == PeerType.CHANNEL
+        or getattr(entity, "broadcast", None) is not None
+        or getattr(entity, "megagroup", None) is not None
+    )
+    is_chat_like = (
+        is_channel_like
+        or peer_type == PeerType.CHAT
+        or getattr(entity, "title", None) is not None
+    )
+    if username:
+        if message_id is not None and is_chat_like:
+            return f"tg://resolve?domain={username}&post={message_id}"
+        return f"tg://resolve?domain={username}"
+    if message_id is not None and is_channel_like and entity_id is not None:
+        return f"tg://privatepost?channel={entity_id}&post={message_id}"
+    phone = getattr(entity, "phone", None)
+    if phone:
+        return f"tg://resolve?phone={phone}"
+    return None
+
+
+def format_chat_reference(
+    entity, fallback_name: str, message_id: int | None = None
+) -> str:
+    link = build_chat_link(entity, message_id=message_id)
+    if link is None:
+        return fallback_name
+    return f"[{fallback_name}]({link})"
+
+
 async def format_default_message_text(
     client: TelegramClient, message: TelegramMessage, tried: bool = False
 ):
@@ -143,11 +190,17 @@ async def format_default_message_text(
     )
     mention_username = await get_mention_text(user)
     mention_chatname = await get_mention_text(chat)
-    text = "**Deleted message** from: [{username}](tg://user?id={userid}) on chat [{chatname}](tg://chat?id={chatid})\n".format(
+    chat_reference = format_chat_reference(
+        chat,
+        mention_chatname,
+        message_id=(
+            int(str(message.id)) if getattr(message, "id", None) is not None else None
+        ),
+    )
+    text = "**Deleted message** from: [{username}](tg://user?id={userid}) on chat {chat_reference}\n".format(
         username=mention_username,
         userid=(str(user.id) if user else "0"),
-        chatname=mention_chatname,
-        chatid=(str(chat.id) if chat else "0"),
+        chat_reference=chat_reference,
     )
     if message.text:
         text += "**Message Text:** " + message.text
@@ -164,11 +217,17 @@ async def format_default_message_edit_text(
     mention_chatname = await get_mention_text(chat)
     old_text = getattr(message, "edit_old_text", "") or ""
     new_text = message.text or ""
-    return "**Edited message** from: [{username}](tg://user?id={userid}) on chat [{chatname}](tg://chat?id={chatid})\n**Old Text:** {old_text}\n**New Text:** {new_text}".format(
+    chat_reference = format_chat_reference(
+        chat,
+        mention_chatname,
+        message_id=(
+            int(str(message.id)) if getattr(message, "id", None) is not None else None
+        ),
+    )
+    return "**Edited message** from: [{username}](tg://user?id={userid}) on chat {chat_reference}\n**Old Text:** {old_text}\n**New Text:** {new_text}".format(
         username=mention_username,
         userid=(str(user.id) if user else "0"),
-        chatname=mention_chatname,
-        chatid=(str(chat.id) if chat else "0"),
+        chat_reference=chat_reference,
         old_text=old_text,
         new_text=new_text,
     )
@@ -191,9 +250,9 @@ async def format_default_unknown_message_text(
             client=client, message_ids=message_ids, event=event, tried=True
         )
     mention_chatname = await get_mention_text(chat)
-    text = "**Unknown deleted messages** on chat [{chatname}](tg://user?id={chatid})\n".format(
-        chatname=mention_chatname,
-        chatid=(str(chat.id) if chat else "0"),
+    chat_reference = format_chat_reference(chat, mention_chatname)
+    text = "**Unknown deleted messages** on chat {chat_reference}\n".format(
+        chat_reference=chat_reference,
     )
     text += (
         "**Message IDs ("

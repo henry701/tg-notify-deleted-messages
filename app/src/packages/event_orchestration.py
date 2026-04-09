@@ -22,7 +22,7 @@ from packages.filtering import raw_should_ignore_message_chat
 from packages.message_loading import load_messages_by_parameters, load_messages_from_db
 from packages.models.root.TelegramMessage import TelegramMessage
 from packages.restart_manager import update_last_activity
-from packages.telegram_helpers import build_telegram_peer
+from packages.telegram_helpers import build_telegram_peer, get_canonical_message_text
 
 logger = logging.getLogger("tgdel-event-orchestration")
 
@@ -283,7 +283,7 @@ def get_on_message_edited(
                         )
                     )
                     if event.message is not None:
-                        msg_text = getattr(event.message, "text", None)
+                        msg_text = get_canonical_message_text(event.message)
                         if msg_text:
                             logger.log(
                                 5, f"Edited message text (not found in DB): {msg_text}"
@@ -295,16 +295,27 @@ def get_on_message_edited(
                     )
 
             awaitables: list[Awaitable[Any]] = []
-            new_text = None
-            if event.message:
-                new_text = getattr(event.message, "text", None)
+            new_text = (
+                get_canonical_message_text(event.message) if event.message else ""
+            )
 
             should_skip_edit = False
-            if new_text is not None and messages:
+            original_update = getattr(event, "original_update", None)
+            reaction_update_types = (
+                telethon.types.UpdateMessageReactions,
+                telethon.types.UpdateBotMessageReaction,
+                telethon.types.UpdateBotMessageReactions,
+            )
+            if isinstance(original_update, reaction_update_types):
+                logger.debug(
+                    "Edit event is a reaction update. Skipping notification and storage."
+                )
+                should_skip_edit = True
+            elif messages:
                 db_text = messages[0].text or "" if messages else ""
                 if db_text == new_text:
                     logger.debug(
-                        "Edit event with same text, likely reaction. Skipping notification."
+                        "Edit event with same canonical text, likely reaction or formatting-only edit. Skipping notification and storage."
                     )
                     should_skip_edit = True
 
@@ -312,9 +323,7 @@ def get_on_message_edited(
                 for message in messages:
                     old_text = message.text or ""
                     notification_message = copy.copy(message)
-                    notification_message.text = (
-                        new_text if new_text is not None else old_text
-                    )
+                    notification_message.text = new_text
                     notification_message.edit_old_text = old_text
                     awaitables.append(notify_message_edit(notification_message, client))
             if unloaded_ids and len(unloaded_ids):
@@ -324,7 +333,7 @@ def get_on_message_edited(
                     edited_messages_notification_concurrency, *awaitables
                 )
 
-            if hasattr(event, "message") and event.message:
+            if hasattr(event, "message") and event.message and not should_skip_edit:
                 await store_message_for_edit(event.message, check_chat=True)
         except Exception as e:
             logger.error(

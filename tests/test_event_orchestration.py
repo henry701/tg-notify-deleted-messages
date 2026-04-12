@@ -569,6 +569,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         event_mock.message.raw_text = "new text"
         event_mock.message.message = "new text"
         event_mock.message.text = "**new text**"
+        event_mock.message.media = None
 
         with (
             patch(
@@ -634,6 +635,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         event_mock.message.raw_text = ""
         event_mock.message.message = ""
         event_mock.message.text = ""
+        event_mock.message.media = None
 
         with (
             patch(
@@ -698,6 +700,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         event_mock.message.raw_text = "same text"
         event_mock.message.message = "same text"
         event_mock.message.text = "same text"
+        event_mock.message.media = None
 
         with (
             patch(
@@ -735,6 +738,68 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
             "EDITED_MESSAGES_NOTIFICATION_CONCURRENCY": "1",
         },
     )
+    async def test_same_text_edit_with_media_still_stores_new_version(self):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        notify_edit = AsyncMock()
+        gather_func = AsyncMock(side_effect=self._await_all)
+
+        mock_message = MagicMock()
+        mock_message.id = 1
+        mock_message.text = "same text"
+
+        event_mock = AsyncMock()
+        event_mock.message_id = 1
+        event_mock.get_input_chat = AsyncMock(return_value=None)
+        event_mock.message = MagicMock()
+        event_mock.message.raw_text = "same text"
+        event_mock.message.message = "same text"
+        event_mock.message.text = "same text"
+        event_mock.message.media = MagicMock(name="replacement-media")
+
+        with (
+            patch(
+                "packages.event_orchestration.load_messages_by_parameters",
+                new_callable=AsyncMock,
+            ) as load_mock,
+            patch(
+                "packages.event_orchestration.get_store_message",
+            ) as get_store_message_mock,
+        ):
+            load_mock.return_value = ([mock_message], MagicMock(), [], [])
+            store_message_mock = AsyncMock()
+            get_store_message_mock.return_value = store_message_mock
+
+            handler = get_on_message_edited(
+                client_mock,
+                session_maker_mock,
+                notify_edit,
+                gather_func,
+            )
+            await handler(event_mock)
+
+        notify_edit.assert_not_called()
+        store_message_mock.assert_awaited_once_with(event_mock.message, check_chat=True)
+
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+            "NOTIFY_OUTGOING_MESSAGES": "True",
+            "EDITED_MESSAGES_NOTIFICATION_CONCURRENCY": "1",
+        },
+    )
     async def test_skips_format_only_edit_by_comparing_raw_text(self):
         client_mock = AsyncMock()
         session_maker_mock = MagicMock()
@@ -759,6 +824,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         event_mock.message.raw_text = "Deleted message from: Henrique"
         event_mock.message.message = "Deleted message from: Henrique"
         event_mock.message.text = "**Deleted message** from: Henrique"
+        event_mock.message.media = None
 
         with (
             patch(
@@ -820,6 +886,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         event_mock.message.raw_text = None
         event_mock.message.message = None
         event_mock.message.text = None
+        event_mock.message.media = None
 
         with (
             patch(
@@ -882,6 +949,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         event_mock.message.raw_text = "new text"
         event_mock.message.message = "new text"
         event_mock.message.text = "new text"
+        event_mock.message.media = None
         event_mock.original_update = telethon.types.UpdateMessageReactions(
             peer=telethon.types.PeerUser(user_id=1),
             msg_id=1,
@@ -1203,8 +1271,8 @@ class GetStoreMessageBranchTests(unittest.IsolatedAsyncioTestCase):
         message_mock.media = MagicMock(name="media-marker")
         message_mock.date = datetime(2026, 4, 12, 13, 0, tzinfo=timezone.utc)
         message_mock.file = MagicMock()
-        message_mock.file.name = None
-        message_mock.file.mime_type = None
+        message_mock.file.name = "new-name.png"
+        message_mock.file.mime_type = "image/png"
 
         user_mock = MagicMock()
         user_mock.id = 123

@@ -304,7 +304,8 @@ def get_on_message_edited(
                 get_canonical_message_text(event.message) if event.message else ""
             )
 
-            should_skip_edit = False
+            should_skip_edit_notification = False
+            should_skip_edit_storage = False
             original_update = getattr(event, "original_update", None)
             reaction_update_types = (
                 telethon.types.UpdateMessageReactions,
@@ -315,16 +316,26 @@ def get_on_message_edited(
                 logger.debug(
                     "Edit event is a reaction update. Skipping notification and storage."
                 )
-                should_skip_edit = True
+                should_skip_edit_notification = True
+                should_skip_edit_storage = True
             elif messages:
                 db_text = messages[0].text or "" if messages else ""
                 if db_text == new_text:
-                    logger.debug(
-                        "Edit event with same canonical text, likely reaction or formatting-only edit. Skipping notification and storage."
+                    message_has_media = (
+                        getattr(event.message, "media", None) is not None
                     )
-                    should_skip_edit = True
+                    logger.debug(
+                        "Edit event with same canonical text. Skipping notification.%s",
+                        (
+                            " Still storing because media is present and attachment state may have changed."
+                            if message_has_media
+                            else " Skipping storage too because no media is present."
+                        ),
+                    )
+                    should_skip_edit_notification = True
+                    should_skip_edit_storage = not message_has_media
 
-            if not should_skip_edit:
+            if not should_skip_edit_notification:
                 for message in messages:
                     old_text = message.text or ""
                     notification_message = copy.copy(message)
@@ -338,7 +349,11 @@ def get_on_message_edited(
                     edited_messages_notification_concurrency, *awaitables
                 )
 
-            if hasattr(event, "message") and event.message and not should_skip_edit:
+            if (
+                hasattr(event, "message")
+                and event.message
+                and not should_skip_edit_storage
+            ):
                 await store_message_for_edit(event.message, check_chat=True)
         except Exception as e:
             logger.error(
@@ -445,19 +460,20 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
                     sqlalchemy_session
                 )
 
+            reusing_previous_media_blob = (
+                blob is None and previous_latest_message is not None
+            )
             inherited_blob = (
-                previous_latest_message.media
-                if blob is None and previous_latest_message is not None
-                else blob
+                previous_latest_message.media if reusing_previous_media_blob else blob
             )
             inherited_media_file_name = (
                 previous_latest_message.media_file_name
-                if media_file_name is None and previous_latest_message is not None
+                if reusing_previous_media_blob
                 else media_file_name
             )
             inherited_media_mime_type = (
                 previous_latest_message.media_mime_type
-                if media_mime_type is None and previous_latest_message is not None
+                if reusing_previous_media_blob
                 else media_mime_type
             )
 

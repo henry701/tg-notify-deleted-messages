@@ -324,16 +324,18 @@ def get_on_message_edited(
                     message_has_media = (
                         getattr(event.message, "media", None) is not None
                     )
+                    db_has_media = getattr(messages[0], "media", None) is not None
+                    should_store_same_text_edit = message_has_media or db_has_media
                     logger.debug(
                         "Edit event with same canonical text. Skipping notification.%s",
                         (
-                            " Still storing because media is present and attachment state may have changed."
-                            if message_has_media
-                            else " Skipping storage too because no media is present."
+                            " Still storing because attachment state may have changed."
+                            if should_store_same_text_edit
+                            else " Skipping storage too because no attachment state changed."
                         ),
                     )
                     should_skip_edit_notification = True
-                    should_skip_edit_storage = not message_has_media
+                    should_skip_edit_storage = not should_store_same_text_edit
 
             if not should_skip_edit_notification:
                 for message in messages:
@@ -466,16 +468,20 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
             inherited_blob = (
                 previous_latest_message.media if reusing_previous_media_blob else blob
             )
-            inherited_media_file_name = (
-                previous_latest_message.media_file_name
-                if previous_latest_message is not None and media_file_name is None
-                else media_file_name
-            )
-            inherited_media_mime_type = (
-                previous_latest_message.media_mime_type
-                if previous_latest_message is not None and media_mime_type is None
-                else media_mime_type
-            )
+            if reusing_previous_media_blob:
+                inherited_media_file_name = previous_latest_message.media_file_name
+                inherited_media_mime_type = previous_latest_message.media_mime_type
+            else:
+                inherited_media_file_name = (
+                    previous_latest_message.media_file_name
+                    if previous_latest_message is not None and media_file_name is None
+                    else media_file_name
+                )
+                inherited_media_mime_type = (
+                    previous_latest_message.media_mime_type
+                    if previous_latest_message is not None and media_mime_type is None
+                    else media_mime_type
+                )
 
             edit_date = getattr(message, "edit_date", None) or message.date
             orm_message = TelegramMessage(

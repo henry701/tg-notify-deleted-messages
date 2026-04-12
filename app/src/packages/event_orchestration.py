@@ -11,6 +11,7 @@ from typing import Any
 import sqlalchemy
 import sqlalchemy.exc
 import telethon
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.selectable import Select
@@ -386,16 +387,21 @@ def get_should_ignore_message_chat(client: TelegramClient):
 
 @retry(retry=retry_if_exception_type(IOError), stop=stop_after_attempt(3))
 async def get_message_media_blob(message: telethon.tl.custom.message.Message):
+    message_file = getattr(message, "file", None) if message is not None else None
+    message_file_size = getattr(message_file, "size", None)
     if (
         not message
         or not message.media
-        or not message.file
-        or not message.file.size
-        or (file_size_threshold > 0 and message.file.size > file_size_threshold)
+        or not message_file
+        or (
+            file_size_threshold > 0
+            and message_file_size is not None
+            and message_file_size > file_size_threshold
+        )
     ):
         return None
     async with download_semaphore:
-        logger.info("Downloading file with %s bytes size", message.file.size)
+        logger.info("Downloading file with %s bytes size", message_file_size)
         return await message.download_media(file=bytes)
 
 
@@ -409,6 +415,17 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
     async def store_message(
         message: telethon.tl.custom.message.Message, check_chat: bool = True
     ):
+        def load_previous_latest_message(sqlalchemy_session):
+            if built_chat_peer is None:
+                return None
+            return sqlalchemy_session.execute(
+                select(TelegramMessage)
+                .where(TelegramMessage.id == message.id)
+                .where(TelegramMessage.chat_peer_id == built_chat_peer.id)
+                .order_by(TelegramMessage.edit_date.desc())
+                .limit(1)
+            ).scalar()
+
         should_ignore: bool = await should_ignore_message(message, check_chat)
         if should_ignore:
             return False
@@ -421,20 +438,41 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
         blob = await get_message_media_blob(message)
         media_file_name, media_mime_type = get_message_media_metadata(message)
 
-        edit_date = getattr(message, "edit_date", None) or message.date
-        orm_message = TelegramMessage(
-            id=message.id,
-            from_peer=built_from_peer,
-            chat_peer=built_chat_peer,
-            text=message.message,
-            media=blob,
-            media_file_name=media_file_name,
-            media_mime_type=media_mime_type,
-            timestamp=message.date,
-            edit_date=edit_date,
-        )
-
         with sqlalchemy_session_maker.begin() as sqlalchemy_session:
+            previous_latest_message = None
+            if getattr(message, "media", None):
+                previous_latest_message = load_previous_latest_message(
+                    sqlalchemy_session
+                )
+
+            inherited_blob = (
+                previous_latest_message.media
+                if blob is None and previous_latest_message is not None
+                else blob
+            )
+            inherited_media_file_name = (
+                previous_latest_message.media_file_name
+                if media_file_name is None and previous_latest_message is not None
+                else media_file_name
+            )
+            inherited_media_mime_type = (
+                previous_latest_message.media_mime_type
+                if media_mime_type is None and previous_latest_message is not None
+                else media_mime_type
+            )
+
+            edit_date = getattr(message, "edit_date", None) or message.date
+            orm_message = TelegramMessage(
+                id=message.id,
+                from_peer=built_from_peer,
+                chat_peer=built_chat_peer,
+                text=message.message,
+                media=inherited_blob,
+                media_file_name=inherited_media_file_name,
+                media_mime_type=inherited_media_mime_type,
+                timestamp=message.date,
+                edit_date=edit_date,
+            )
             sqlalchemy_session.merge(orm_message)
             return True
 

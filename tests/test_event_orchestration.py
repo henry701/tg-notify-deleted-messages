@@ -1,5 +1,6 @@
 import asyncio
 import unittest
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1066,7 +1067,10 @@ class GetStoreMessageBranchTests(unittest.IsolatedAsyncioTestCase):
         message_mock.from_id = None
         message_mock.peer_id = MagicMock()
         message_mock.media = None
-        message_mock.date = None
+        message_mock.date = datetime(2026, 4, 12, 12, 0, tzinfo=timezone.utc)
+        message_mock.file = MagicMock()
+        message_mock.file.name = "report.pdf"
+        message_mock.file.mime_type = "application/pdf"
 
         user_mock = MagicMock()
         user_mock.id = 123
@@ -1083,10 +1087,14 @@ class GetStoreMessageBranchTests(unittest.IsolatedAsyncioTestCase):
             ) as get_blob,
         ):
             build_peer.return_value = None
-            get_blob.return_value = None
+            get_blob.return_value = b"blob-data"
             result = await store_fn(message_mock)
             self.assertTrue(result)
             session_mock.merge.assert_called_once()
+            merged_message = session_mock.merge.call_args.args[0]
+            self.assertEqual(merged_message.media, b"blob-data")
+            self.assertEqual(merged_message.media_file_name, "report.pdf")
+            self.assertEqual(merged_message.media_mime_type, "application/pdf")
 
     @patch.dict(
         "os.environ",

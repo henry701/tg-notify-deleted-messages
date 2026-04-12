@@ -11,6 +11,7 @@ from packages.telegram_helpers import (
     format_default_message_edit_text,
     format_default_message_text,
     format_default_unknown_message_text,
+    send_stored_message_with_optional_media,
 )
 
 
@@ -59,10 +60,11 @@ class BotAssistant:
         self.throw_if_uninitialized()
         assert self.client is not None
         logging.debug("bot_assistant notify_message_deletion send_message")
-        await self.client.send_message(
+        await send_stored_message_with_optional_media(
+            sender_client=self.client,
             entity=self.target_chat,
-            message=await format_default_message_text(client, message),
-            file=message.media,
+            formatted_text=await format_default_message_text(client, message),
+            message=message,
         )
 
     async def notify_unknown_message(
@@ -89,10 +91,11 @@ class BotAssistant:
         self.throw_if_uninitialized()
         assert self.client is not None
         logging.debug("bot_assistant notify_message_edit send_message")
-        await self.client.send_message(
+        await send_stored_message_with_optional_media(
+            sender_client=self.client,
             entity=self.target_chat,
-            message=await format_default_message_edit_text(client, message),
-            file=message.media,
+            formatted_text=await format_default_message_edit_text(client, message),
+            message=message,
         )
 
     def throw_if_uninitialized(self):

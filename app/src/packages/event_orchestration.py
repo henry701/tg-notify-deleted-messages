@@ -22,7 +22,11 @@ from packages.filtering import raw_should_ignore_message_chat
 from packages.message_loading import load_messages_by_parameters, load_messages_from_db
 from packages.models.root.TelegramMessage import TelegramMessage
 from packages.restart_manager import update_last_activity
-from packages.telegram_helpers import build_telegram_peer, get_canonical_message_text
+from packages.telegram_helpers import (
+    build_telegram_peer,
+    get_canonical_message_text,
+    get_message_media_metadata,
+)
 
 logger = logging.getLogger("tgdel-event-orchestration")
 
@@ -415,6 +419,7 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
             message.peer_id, client, sqlalchemy_session_maker
         )
         blob = await get_message_media_blob(message)
+        media_file_name, media_mime_type = get_message_media_metadata(message)
 
         edit_date = getattr(message, "edit_date", None) or message.date
         orm_message = TelegramMessage(
@@ -423,6 +428,8 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
             chat_peer=built_chat_peer,
             text=message.message,
             media=blob,
+            media_file_name=media_file_name,
+            media_mime_type=media_mime_type,
             timestamp=message.date,
             edit_date=edit_date,
         )

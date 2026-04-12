@@ -46,13 +46,24 @@ class BotAssistantNotifyTests(unittest.IsolatedAsyncioTestCase):
 
         client_mock = AsyncMock()
 
-        with patch(
-            "packages.bot_assistant.format_default_message_text",
-            new_callable=AsyncMock,
-        ) as fmt_mock:
+        with (
+            patch(
+                "packages.bot_assistant.format_default_message_text",
+                new_callable=AsyncMock,
+            ) as fmt_mock,
+            patch(
+                "packages.bot_assistant.send_stored_message_with_optional_media",
+                new_callable=AsyncMock,
+            ) as send_mock,
+        ):
             fmt_mock.return_value = "formatted text"
             await bot.notify_message_deletion(message_mock, client_mock)
-            bot.client.send_message.assert_called_once()
+            send_mock.assert_awaited_once_with(
+                sender_client=bot.client,
+                entity="me",
+                formatted_text="formatted text",
+                message=message_mock,
+            )
 
     async def test_notify_unknown_message(self):
         bot = BotAssistant("me", 123, "hash", "token", MagicMock())
@@ -75,16 +86,23 @@ class BotAssistantNotifyTests(unittest.IsolatedAsyncioTestCase):
         message_mock.media = None
         client_mock = AsyncMock()
 
-        with patch(
-            "packages.bot_assistant.format_default_message_edit_text",
-            new_callable=AsyncMock,
-        ) as fmt_mock:
+        with (
+            patch(
+                "packages.bot_assistant.format_default_message_edit_text",
+                new_callable=AsyncMock,
+            ) as fmt_mock,
+            patch(
+                "packages.bot_assistant.send_stored_message_with_optional_media",
+                new_callable=AsyncMock,
+            ) as send_mock,
+        ):
             fmt_mock.return_value = "formatted edit"
             await bot.notify_message_edit(message_mock, client_mock)
-            bot.client.send_message.assert_called_once_with(
+            send_mock.assert_awaited_once_with(
+                sender_client=bot.client,
                 entity="target-chat",
-                message="formatted edit",
-                file=None,
+                formatted_text="formatted edit",
+                message=message_mock,
             )
 
     async def test_notify_raises_when_uninitialized(self):

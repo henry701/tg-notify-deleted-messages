@@ -2,7 +2,10 @@ import os
 import unittest
 from unittest.mock import MagicMock, patch
 
+import sqlalchemy
 from packages.db_helpers import (
+    ADDITIVE_COLUMN_MIGRATIONS,
+    apply_additive_migrations,
     create_database,
     encrypt_database_metadata,
     get_db_url,
@@ -12,11 +15,13 @@ from packages.db_helpers import (
 )
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Column,
     ForeignKey,
     Integer,
     LargeBinary,
     MetaData,
+    TIMESTAMP,
     String,
     Table,
 )
@@ -149,9 +154,59 @@ class DbHelpersTests(unittest.TestCase):
     def test_create_database_calls_create_all_with_encrypted_metadata(self) -> None:
         mock_engine = MagicMock()
         mock_metadata = MagicMock()
-        with patch(
-            "packages.db_helpers.encrypt_database_metadata",
-            return_value=mock_metadata,
+        with (
+            patch(
+                "packages.db_helpers.encrypt_database_metadata",
+                return_value=mock_metadata,
+            ),
+            patch("packages.db_helpers.apply_additive_migrations") as migrate_mock,
         ):
             create_database(mock_engine)
             mock_metadata.create_all.assert_called_once_with(mock_engine)
+            migrate_mock.assert_called_once_with(mock_engine, mock_metadata)
+
+    def test_additive_migrations_include_attachment_metadata_columns(self) -> None:
+        self.assertEqual(
+            ADDITIVE_COLUMN_MIGRATIONS["telegram_messages"],
+            ("media_file_name", "media_mime_type"),
+        )
+
+    def test_apply_additive_migrations_adds_missing_message_attachment_columns(
+        self,
+    ) -> None:
+        engine = sqlalchemy.create_engine("sqlite:///:memory:")
+        legacy_metadata = MetaData()
+        Table(
+            "telegram_peers",
+            legacy_metadata,
+            Column("id", BigInteger(), primary_key=True),
+            Column("peer_id", BigInteger()),
+            Column("access_hash", BigInteger()),
+            Column("type", Integer()),
+        )
+        Table(
+            "telegram_messages",
+            legacy_metadata,
+            Column("id", BigInteger(), primary_key=True),
+            Column("chat_peer_id", BigInteger(), primary_key=True),
+            Column("edit_date", TIMESTAMP(timezone=True), primary_key=True),
+            Column("from_peer_id", BigInteger()),
+            Column("text", String()),
+            Column("media", LargeBinary()),
+            Column("timestamp", TIMESTAMP(timezone=True)),
+            Column("deleted", Boolean()),
+        )
+        legacy_metadata.create_all(engine)
+
+        try:
+            apply_additive_migrations(engine)
+            columns = {
+                column["name"]
+                for column in sqlalchemy.inspect(engine).get_columns(
+                    "telegram_messages"
+                )
+            }
+            self.assertIn("media_file_name", columns)
+            self.assertIn("media_mime_type", columns)
+        finally:
+            engine.dispose()

@@ -12,6 +12,7 @@ from packages.telegram_helpers import (
     format_default_message_text,
     format_default_unknown_message_text,
     get_mention_text as get_entity_mention_text,
+    send_stored_message_with_optional_media,
 )
 
 
@@ -34,10 +35,11 @@ def get_default_notify_message_deletion() -> Callable[
     async def default_notify_message_deletion(
         message: TelegramMessage, client: TelegramClient
     ):
-        await client.send_message(
+        await send_stored_message_with_optional_media(
+            sender_client=client,
             entity="me",
-            message=await format_default_message_text(client, message),  # type: ignore
-            file=message.media,  # type: ignore
+            formatted_text=await format_default_message_text(client, message),
+            message=message,
         )
 
     return default_notify_message_deletion
@@ -76,10 +78,11 @@ def get_default_notify_message_edit() -> Callable[
     async def default_notify_message_edit(
         message: TelegramMessage, client: TelegramClient
     ):
-        await client.send_message(
+        await send_stored_message_with_optional_media(
+            sender_client=client,
             entity="me",
-            message=await format_default_message_edit_text(client, message),
-            file=message.media,  # type: ignore
+            formatted_text=await format_default_message_edit_text(client, message),
+            message=message,
         )
 
     return default_notify_message_edit

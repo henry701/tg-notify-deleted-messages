@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from packages.models.root.TelegramPeer import TelegramPeer
 from packages.models.support.PeerType import PeerType
 from packages.telegram_helpers import (
+    build_stored_media_file,
     build_chat_link,
     build_peer_entity,
     build_telegram_peer,
@@ -11,8 +12,11 @@ from packages.telegram_helpers import (
     format_default_message_text,
     format_default_unknown_message_text,
     get_canonical_message_text,
+    get_message_media_metadata,
     get_mention_text,
     refresh_client,
+    resolve_stored_media_file_name,
+    send_stored_message_with_optional_media,
     to_telethon_input_peer,
 )
 from telethon.tl.types import (
@@ -133,6 +137,121 @@ class GetCanonicalMessageTextTests(unittest.TestCase):
         result = get_canonical_message_text(message)
 
         self.assertEqual(result, "")
+
+
+class GetMessageMediaMetadataTests(unittest.TestCase):
+    def test_extracts_filename_and_mime_type_from_message_file(self):
+        message = MagicMock()
+        message.file = MagicMock()
+        message.file.name = "report.pdf"
+        message.file.mime_type = "application/pdf"
+
+        result = get_message_media_metadata(message)
+
+        self.assertEqual(result, ("report.pdf", "application/pdf"))
+
+    def test_ignores_non_string_metadata_values(self):
+        message = MagicMock()
+        message.file = MagicMock()
+        message.file.name = MagicMock()
+        message.file.mime_type = MagicMock()
+
+        result = get_message_media_metadata(message)
+
+        self.assertEqual(result, (None, None))
+
+
+class ResolveStoredMediaFileNameTests(unittest.TestCase):
+    def test_prefers_stored_file_name_when_present(self):
+        message = MagicMock()
+        message.media_file_name = "invoice.pdf"
+        message.media_mime_type = "application/pdf"
+
+        result = resolve_stored_media_file_name(message)
+
+        self.assertEqual(result, "invoice.pdf")
+
+    def test_synthesizes_extension_from_mime_type_when_missing(self):
+        message = MagicMock()
+        message.media_file_name = None
+        message.media_mime_type = "image/jpeg"
+
+        result = resolve_stored_media_file_name(message)
+
+        self.assertEqual(result, "attachment.jpg")
+
+    def test_appends_extension_when_name_has_none(self):
+        message = MagicMock()
+        message.media_file_name = "attachment"
+        message.media_mime_type = "text/plain"
+
+        result = resolve_stored_media_file_name(message)
+
+        self.assertEqual(result, "attachment.txt")
+
+
+class BuildStoredMediaFileTests(unittest.TestCase):
+    def test_builds_named_bytes_io_for_stored_media(self):
+        message = MagicMock()
+        message.media = b"binary-data"
+        message.media_file_name = "photo.jpg"
+        message.media_mime_type = "image/jpeg"
+
+        media_file = build_stored_media_file(message)
+
+        self.assertIsNotNone(media_file)
+        assert media_file is not None
+        self.assertEqual(media_file.name, "photo.jpg")
+        self.assertEqual(media_file.read(), b"binary-data")
+
+    def test_returns_none_when_message_has_no_media(self):
+        message = MagicMock()
+        message.media = None
+
+        self.assertIsNone(build_stored_media_file(message))
+
+
+class SendStoredMessageWithOptionalMediaTests(unittest.IsolatedAsyncioTestCase):
+    async def test_uses_send_message_when_no_media_is_present(self):
+        sender_client = AsyncMock()
+        message = MagicMock()
+        message.media = None
+
+        await send_stored_message_with_optional_media(
+            sender_client,
+            "me",
+            "formatted text",
+            message,
+        )
+
+        sender_client.send_message.assert_awaited_once_with(
+            entity="me",
+            message="formatted text",
+        )
+        sender_client.send_file.assert_not_called()
+
+    async def test_uses_send_file_with_named_stream_and_mime_type(self):
+        sender_client = AsyncMock()
+        message = MagicMock()
+        message.media = b"binary-data"
+        message.media_file_name = "document.pdf"
+        message.media_mime_type = "application/pdf"
+
+        await send_stored_message_with_optional_media(
+            sender_client,
+            "me",
+            "formatted text",
+            message,
+        )
+
+        sender_client.send_file.assert_awaited_once()
+        send_kwargs = sender_client.send_file.await_args.kwargs
+        self.assertEqual(send_kwargs["entity"], "me")
+        self.assertEqual(send_kwargs["caption"], "formatted text")
+        self.assertEqual(send_kwargs["mime_type"], "application/pdf")
+        self.assertEqual(send_kwargs["file"].name, "document.pdf")
+        self.assertEqual(send_kwargs["file"].read(), b"binary-data")
+        sender_client.send_message.assert_not_called()
 
 
 class BuildChatLinkTests(unittest.TestCase):

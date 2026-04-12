@@ -25,9 +25,10 @@ class NotificationsTests(unittest.IsolatedAsyncioTestCase):
         result = get_default_notify_unknown_message()
         self.assertTrue(callable(result))
 
+    @patch("packages.notifications.send_stored_message_with_optional_media")
     @patch("packages.notifications.format_default_message_text")
     async def test_default_notify_message_deletion_calls_send_message(
-        self, mock_format_text
+        self, mock_format_text, mock_send_with_media
     ):
         mock_client = AsyncMock()
         mock_message = MagicMock()
@@ -38,10 +39,12 @@ class NotificationsTests(unittest.IsolatedAsyncioTestCase):
         notify_func = get_default_notify_message_deletion()
         await notify_func(mock_message, mock_client)
 
-        mock_client.send_message.assert_called_once()
-        call_args = mock_client.send_message.call_args
-        self.assertEqual(call_args.kwargs["entity"], "me")
-        self.assertEqual(call_args.kwargs["message"], "Test message")
+        mock_send_with_media.assert_awaited_once_with(
+            sender_client=mock_client,
+            entity="me",
+            formatted_text="Test message",
+            message=mock_message,
+        )
 
     @patch("packages.notifications.format_default_unknown_message_text")
     async def test_default_notify_unknown_message_calls_send_message(
@@ -61,9 +64,10 @@ class NotificationsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call_args.kwargs["entity"], "me")
         self.assertEqual(call_args.kwargs["message"], "Unknown messages")
 
+    @patch("packages.notifications.send_stored_message_with_optional_media")
     @patch("packages.notifications.format_default_message_text")
     async def test_default_notify_message_deletion_includes_media(
-        self, mock_format_text
+        self, mock_format_text, mock_send_with_media
     ):
         mock_client = AsyncMock()
         mock_media = MagicMock()
@@ -75,8 +79,12 @@ class NotificationsTests(unittest.IsolatedAsyncioTestCase):
         notify_func = get_default_notify_message_deletion()
         await notify_func(mock_message, mock_client)
 
-        call_args = mock_client.send_message.call_args
-        self.assertEqual(call_args.kwargs["file"], mock_media)
+        mock_send_with_media.assert_awaited_once_with(
+            sender_client=mock_client,
+            entity="me",
+            formatted_text="Test message",
+            message=mock_message,
+        )
 
     async def test_base_notify_message_deletion_merges_and_marks_deleted(self):
         mock_session = MagicMock()
@@ -103,9 +111,10 @@ class NotificationsTests(unittest.IsolatedAsyncioTestCase):
         result = get_default_notify_message_edit()
         self.assertTrue(callable(result))
 
+    @patch("packages.notifications.send_stored_message_with_optional_media")
     @patch("packages.notifications.format_default_message_edit_text")
     async def test_default_notify_message_edit_calls_send_message(
-        self, mock_format_text
+        self, mock_format_text, mock_send_with_media
     ):
         mock_client = AsyncMock()
         mock_message = MagicMock()
@@ -116,10 +125,12 @@ class NotificationsTests(unittest.IsolatedAsyncioTestCase):
         notify_func = get_default_notify_message_edit()
         await notify_func(mock_message, mock_client)
 
-        mock_client.send_message.assert_called_once()
-        call_args = mock_client.send_message.call_args
-        self.assertEqual(call_args.kwargs["entity"], "me")
-        self.assertEqual(call_args.kwargs["message"], "Formatted edit text")
+        mock_send_with_media.assert_awaited_once_with(
+            sender_client=mock_client,
+            entity="me",
+            formatted_text="Formatted edit text",
+            message=mock_message,
+        )
 
     async def test_base_notify_message_edit_merges_without_marking_deleted(self):
         mock_session_maker = MagicMock()
@@ -287,7 +298,9 @@ class GetMentionTextTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "Direct Peer")
 
     @patch("packages.notifications.build_peer_entity", new_callable=AsyncMock)
-    async def test_resolves_telegram_peer_via_shared_helper(self, mock_build_peer_entity):
+    async def test_resolves_telegram_peer_via_shared_helper(
+        self, mock_build_peer_entity
+    ):
         mock_client = AsyncMock()
         mock_entity = MagicMock()
         mock_entity.title = "Resolved Peer"

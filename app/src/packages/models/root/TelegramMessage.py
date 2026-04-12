@@ -47,5 +47,7 @@ class TelegramMessage(Base):
     )
     text = Column(encrypt_type_safer(UnicodeText()))
     media = Column(encrypt_type_safer(LargeBinary()))
+    media_file_name = Column(encrypt_type_safer(UnicodeText()), nullable=True)
+    media_mime_type = Column(encrypt_type_safer(UnicodeText()), nullable=True)
     timestamp = Column(TIMESTAMP(timezone=True), nullable=False, index=True)
     deleted = Column(Boolean(), nullable=False, default=False, index=True)

@@ -1,3 +1,7 @@
+import io
+import mimetypes
+import os
+
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql.expression import select
 from telethon.client.telegramclient import TelegramClient
@@ -143,6 +147,79 @@ def get_canonical_message_text(message) -> str:
         if isinstance(value, str):
             return value
     return ""
+
+
+def normalize_optional_string(value) -> str | None:
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def get_message_media_metadata(message) -> tuple[str | None, str | None]:
+    if message is None:
+        return (None, None)
+    message_file = getattr(message, "file", None)
+    return (
+        normalize_optional_string(getattr(message_file, "name", None)),
+        normalize_optional_string(getattr(message_file, "mime_type", None)),
+    )
+
+
+def resolve_stored_media_file_name(message: TelegramMessage) -> str | None:
+    stored_file_name = normalize_optional_string(
+        getattr(message, "media_file_name", None)
+    )
+    stored_mime_type = normalize_optional_string(
+        getattr(message, "media_mime_type", None)
+    )
+    guessed_extension = (
+        mimetypes.guess_extension(stored_mime_type, strict=False)
+        if stored_mime_type is not None
+        else None
+    )
+
+    if stored_file_name is not None:
+        if guessed_extension and not os.path.splitext(stored_file_name)[1]:
+            return stored_file_name + guessed_extension
+        return stored_file_name
+    if guessed_extension is not None:
+        return f"attachment{guessed_extension}"
+    return None
+
+
+def build_stored_media_file(message: TelegramMessage) -> io.BytesIO | None:
+    if not getattr(message, "media", None):
+        return None
+    media_stream = io.BytesIO(message.media)
+    resolved_file_name = resolve_stored_media_file_name(message)
+    if resolved_file_name is not None:
+        media_stream.name = resolved_file_name
+    media_stream.seek(0)
+    return media_stream
+
+
+async def send_stored_message_with_optional_media(
+    sender_client: TelegramClient,
+    entity,
+    formatted_text: str,
+    message: TelegramMessage,
+):
+    media_stream = build_stored_media_file(message)
+    if media_stream is None:
+        await sender_client.send_message(entity=entity, message=formatted_text)
+        return
+
+    send_file_kwargs = {
+        "entity": entity,
+        "file": media_stream,
+        "caption": formatted_text,
+    }
+    stored_mime_type = normalize_optional_string(
+        getattr(message, "media_mime_type", None)
+    )
+    if stored_mime_type is not None:
+        send_file_kwargs["mime_type"] = stored_mime_type
+    await sender_client.send_file(**send_file_kwargs)
 
 
 def build_chat_link(entity, message_id: int | None = None) -> str | None:

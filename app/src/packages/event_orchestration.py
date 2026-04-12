@@ -468,12 +468,12 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
             )
             inherited_media_file_name = (
                 previous_latest_message.media_file_name
-                if reusing_previous_media_blob
+                if previous_latest_message is not None and media_file_name is None
                 else media_file_name
             )
             inherited_media_mime_type = (
                 previous_latest_message.media_mime_type
-                if reusing_previous_media_blob
+                if previous_latest_message is not None and media_mime_type is None
                 else media_mime_type
             )
 

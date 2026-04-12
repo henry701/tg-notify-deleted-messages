@@ -1271,8 +1271,8 @@ class GetStoreMessageBranchTests(unittest.IsolatedAsyncioTestCase):
         message_mock.media = MagicMock(name="media-marker")
         message_mock.date = datetime(2026, 4, 12, 13, 0, tzinfo=timezone.utc)
         message_mock.file = MagicMock()
-        message_mock.file.name = "new-name.png"
-        message_mock.file.mime_type = "image/png"
+        message_mock.file.name = None
+        message_mock.file.mime_type = None
 
         user_mock = MagicMock()
         user_mock.id = 123
@@ -1295,6 +1295,71 @@ class GetStoreMessageBranchTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result)
         merged_message = session_mock.merge.call_args.args[0]
         self.assertEqual(merged_message.media, b"old-blob")
+        self.assertEqual(merged_message.media_file_name, "photo.jpg")
+        self.assertEqual(merged_message.media_mime_type, "image/jpeg")
+
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+        },
+    )
+    async def test_preserves_previous_metadata_when_new_blob_lacks_metadata(self):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+        built_chat_peer = MagicMock()
+        built_chat_peer.id = 987
+
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        previous_message = MagicMock()
+        previous_message.media = b"old-blob"
+        previous_message.media_file_name = "photo.jpg"
+        previous_message.media_mime_type = "image/jpeg"
+        session_mock.execute.return_value.scalar.return_value = previous_message
+
+        store_fn = get_store_message(session_maker_mock, client_mock)
+
+        message_mock = AsyncMock()
+        message_mock.id = 1
+        message_mock.message = "updated caption"
+        message_mock.from_id = None
+        message_mock.peer_id = MagicMock(name="telethon_peer")
+        message_mock.media = MagicMock(name="media-marker")
+        message_mock.date = datetime(2026, 4, 12, 13, 30, tzinfo=timezone.utc)
+        message_mock.file = MagicMock()
+        message_mock.file.name = None
+        message_mock.file.mime_type = None
+
+        user_mock = MagicMock()
+        user_mock.id = 123
+        message_mock.get_chat = AsyncMock(return_value=user_mock)
+
+        with (
+            patch(
+                "packages.event_orchestration.build_telegram_peer",
+                new_callable=AsyncMock,
+            ) as build_peer,
+            patch(
+                "packages.event_orchestration.get_message_media_blob",
+                new_callable=AsyncMock,
+            ) as get_blob,
+        ):
+            build_peer.side_effect = [None, built_chat_peer]
+            get_blob.return_value = b"new-blob"
+            result = await store_fn(message_mock)
+
+        self.assertTrue(result)
+        merged_message = session_mock.merge.call_args.args[0]
+        self.assertEqual(merged_message.media, b"new-blob")
         self.assertEqual(merged_message.media_file_name, "photo.jpg")
         self.assertEqual(merged_message.media_mime_type, "image/jpeg")
 

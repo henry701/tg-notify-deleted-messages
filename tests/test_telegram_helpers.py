@@ -8,18 +8,25 @@ from packages.telegram_helpers import (
     build_chat_link,
     build_peer_entity,
     build_telegram_peer,
+    deserialize_stored_document_attributes,
     format_default_message_edit_text,
+    format_default_message_batch_texts,
     format_default_message_text,
     format_default_unknown_message_text,
     get_canonical_message_text,
+    get_message_grouped_id,
     get_message_media_metadata,
     get_mention_text,
     refresh_client,
     resolve_stored_media_file_name,
+    send_stored_messages_with_optional_media,
     send_stored_message_with_optional_media,
+    serialize_message_document_attributes,
     to_telethon_input_peer,
 )
 from telethon.tl.types import (
+    DocumentAttributeAudio,
+    DocumentAttributeVideo,
     InputPeerChannel,
     InputPeerChat,
     InputPeerSelf,
@@ -161,6 +168,71 @@ class GetMessageMediaMetadataTests(unittest.TestCase):
         self.assertEqual(result, (None, None))
 
 
+class GetMessageGroupedIdTests(unittest.TestCase):
+    def test_extracts_integer_grouped_id(self):
+        message = MagicMock()
+        message.grouped_id = 123456789
+
+        self.assertEqual(get_message_grouped_id(message), 123456789)
+
+    def test_returns_none_for_invalid_grouped_id(self):
+        message = MagicMock()
+        message.grouped_id = MagicMock()
+
+        self.assertIsNone(get_message_grouped_id(message))
+
+
+class SerializeMessageDocumentAttributesTests(unittest.TestCase):
+    def test_serializes_audio_and_video_attributes(self):
+        message = MagicMock()
+        message.document = MagicMock()
+        message.document.attributes = [
+            DocumentAttributeAudio(
+                duration=12,
+                voice=True,
+                title="Voice title",
+                performer="Performer",
+                waveform=b"\x00\x01",
+            ),
+            DocumentAttributeVideo(
+                duration=5,
+                w=640,
+                h=360,
+                round_message=False,
+                supports_streaming=True,
+            ),
+        ]
+
+        serialized = serialize_message_document_attributes(message)
+        restored_message = MagicMock()
+        restored_message.media_file_name = "voice.ogg"
+        restored_message.media_mime_type = "audio/ogg"
+        restored_message.media_document_attributes = serialized
+
+        restored_attributes = deserialize_stored_document_attributes(restored_message)
+
+        assert restored_attributes is not None
+        audio_attribute = next(
+            attr
+            for attr in restored_attributes
+            if isinstance(attr, DocumentAttributeAudio)
+        )
+        video_attribute = next(
+            attr
+            for attr in restored_attributes
+            if isinstance(attr, DocumentAttributeVideo)
+        )
+        self.assertTrue(audio_attribute.voice)
+        self.assertEqual(audio_attribute.duration, 12)
+        self.assertEqual(audio_attribute.title, "Voice title")
+        self.assertEqual(audio_attribute.performer, "Performer")
+        self.assertEqual(audio_attribute.waveform, b"\x00\x01")
+        self.assertEqual(video_attribute.duration, 5)
+        self.assertEqual(video_attribute.w, 640)
+        self.assertEqual(video_attribute.h, 360)
+        self.assertTrue(video_attribute.supports_streaming)
+
+
 class ResolveStoredMediaFileNameTests(unittest.TestCase):
     def test_prefers_stored_file_name_when_present(self):
         message = MagicMock()
@@ -251,7 +323,100 @@ class SendStoredMessageWithOptionalMediaTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(send_kwargs["mime_type"], "application/pdf")
         self.assertEqual(send_kwargs["file"].name, "document.pdf")
         self.assertEqual(send_kwargs["file"].read(), b"binary-data")
+        self.assertEqual(len(send_kwargs["attributes"]), 1)
         sender_client.send_message.assert_not_called()
+
+    async def test_uses_stored_document_attributes_for_audio(self):
+        sender_client = AsyncMock()
+        message = MagicMock()
+        message.media = b"audio-data"
+        message.media_file_name = "voice.ogg"
+        message.media_mime_type = "audio/ogg"
+        message.media_document_attributes = (
+            '[{"type":"audio","duration":7,"voice":true,"title":"Voice",'
+            '"performer":"Bot","waveform":"AAE="}]'
+        )
+
+        await send_stored_message_with_optional_media(
+            sender_client,
+            "me",
+            "formatted text",
+            message,
+        )
+
+        send_kwargs = sender_client.send_file.await_args.kwargs
+        self.assertEqual(send_kwargs["mime_type"], "audio/ogg")
+        audio_attribute = next(
+            attr
+            for attr in send_kwargs["attributes"]
+            if isinstance(attr, DocumentAttributeAudio)
+        )
+        self.assertTrue(audio_attribute.voice)
+        self.assertEqual(audio_attribute.duration, 7)
+        self.assertEqual(audio_attribute.title, "Voice")
+        self.assertEqual(audio_attribute.performer, "Bot")
+        self.assertEqual(audio_attribute.waveform, b"\x00\x01")
+
+
+class SendStoredMessagesWithOptionalMediaTests(unittest.IsolatedAsyncioTestCase):
+    async def test_sends_grouped_messages_as_album(self):
+        sender_client = AsyncMock()
+        first_message = MagicMock()
+        first_message.grouped_id = 555
+        first_message.media = b"first"
+        first_message.media_file_name = "first.jpg"
+        first_message.media_mime_type = "image/jpeg"
+        first_message.media_document_attributes = None
+
+        second_message = MagicMock()
+        second_message.grouped_id = 555
+        second_message.media = b"second"
+        second_message.media_file_name = "second.jpg"
+        second_message.media_mime_type = "image/jpeg"
+        second_message.media_document_attributes = None
+
+        await send_stored_messages_with_optional_media(
+            sender_client=sender_client,
+            entity="me",
+            formatted_texts=["first caption", "second caption"],
+            messages=[first_message, second_message],
+        )
+
+        sender_client.send_file.assert_awaited_once()
+        send_kwargs = sender_client.send_file.await_args.kwargs
+        self.assertEqual(send_kwargs["caption"], ["first caption", "second caption"])
+        self.assertEqual(len(send_kwargs["file"]), 2)
+        self.assertEqual(send_kwargs["file"][0].name, "first.jpg")
+        self.assertEqual(send_kwargs["file"][1].name, "second.jpg")
+
+    async def test_falls_back_to_individual_sends_when_album_is_not_replayable(self):
+        sender_client = AsyncMock()
+        first_message = MagicMock()
+        first_message.grouped_id = 555
+        first_message.media = b"first"
+        first_message.media_file_name = "first.jpg"
+        first_message.media_mime_type = "image/jpeg"
+        first_message.media_document_attributes = None
+
+        second_message = MagicMock()
+        second_message.grouped_id = 555
+        second_message.media = None
+        second_message.media_file_name = None
+        second_message.media_mime_type = None
+        second_message.media_document_attributes = None
+
+        await send_stored_messages_with_optional_media(
+            sender_client=sender_client,
+            entity="me",
+            formatted_texts=["first caption", "second caption"],
+            messages=[first_message, second_message],
+        )
+
+        self.assertEqual(sender_client.send_file.await_count, 1)
+        sender_client.send_message.assert_awaited_once_with(
+            entity="me",
+            message="second caption",
+        )
 
 
 class BuildChatLinkTests(unittest.TestCase):
@@ -597,6 +762,65 @@ class FormatDefaultMessageTextTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("Deleted message", result)
         self.assertNotIn("**Message Text:**", result)
+
+    async def test_formats_album_batch_with_single_header(self):
+        from packages.models.root.TelegramMessage import TelegramMessage
+        from packages.models.root.TelegramPeer import TelegramPeer
+        from packages.models.support.PeerType import PeerType
+
+        client = AsyncMock()
+        user_entity = MagicMock()
+        user_entity.id = 100
+        user_entity.first_name = "John"
+        user_entity.last_name = "Doe"
+        user_entity.title = None
+        user_entity.username = None
+        user_entity.phone = None
+        user_entity.chat_id = None
+
+        chat_entity = MagicMock()
+        chat_entity.id = 200
+        chat_entity.title = "Album Chat"
+        chat_entity.first_name = None
+        chat_entity.last_name = None
+        chat_entity.username = None
+        chat_entity.phone = None
+        chat_entity.chat_id = None
+        chat_entity.megagroup = True
+
+        client.get_entity.side_effect = [user_entity, chat_entity]
+
+        from_peer = TelegramPeer(id=1, peer_id=100, access_hash=1, type=PeerType.USER)
+        chat_peer = TelegramPeer(id=2, peer_id=200, access_hash=2, type=PeerType.CHAT)
+
+        messages = [
+            TelegramMessage(
+                id=1,
+                from_peer=from_peer,
+                chat_peer=chat_peer,
+                text="first",
+                media=b"a",
+                timestamp=None,
+            ),
+            TelegramMessage(
+                id=2,
+                from_peer=from_peer,
+                chat_peer=chat_peer,
+                text="second",
+                media=b"b",
+                timestamp=None,
+            ),
+        ]
+
+        with patch(
+            "packages.telegram_helpers.to_telethon_input_peer", return_value=MagicMock()
+        ):
+            result = await format_default_message_batch_texts(client, messages)
+
+        self.assertEqual(len(result), 2)
+        self.assertIn("Deleted album", result[0])
+        self.assertIn("first", result[0])
+        self.assertEqual(result[1], "**Message Text:** second")
         self.assertNotIn("tg://chat?id=", result)
 
     async def test_raises_on_second_valueerror(self):

@@ -10,7 +10,12 @@ import packages.models
 from packages.env_helpers import require_env
 
 ADDITIVE_COLUMN_MIGRATIONS = {
-    "telegram_messages": ("media_file_name", "media_mime_type"),
+    "telegram_messages": (
+        "grouped_id",
+        "media_file_name",
+        "media_mime_type",
+        "media_document_attributes",
+    ),
 }
 
 

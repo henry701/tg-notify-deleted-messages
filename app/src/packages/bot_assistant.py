@@ -8,9 +8,10 @@ from telethon.sessions.abstract import Session
 
 from packages.models.root.TelegramMessage import TelegramMessage
 from packages.telegram_helpers import (
+    format_default_message_batch_texts,
     format_default_message_edit_text,
-    format_default_message_text,
     format_default_unknown_message_text,
+    send_stored_messages_with_optional_media,
     send_stored_message_with_optional_media,
 )
 
@@ -60,11 +61,19 @@ class BotAssistant:
         self.throw_if_uninitialized()
         assert self.client is not None
         logging.debug("bot_assistant notify_message_deletion send_message")
-        await send_stored_message_with_optional_media(
+        raw_album_messages = getattr(message, "album_messages", None)
+        album_messages = (
+            raw_album_messages
+            if isinstance(raw_album_messages, list) and len(raw_album_messages) > 0
+            else [message]
+        )
+        await send_stored_messages_with_optional_media(
             sender_client=self.client,
             entity=self.target_chat,
-            formatted_text=await format_default_message_text(client, message),
-            message=message,
+            formatted_texts=await format_default_message_batch_texts(
+                client, album_messages
+            ),
+            messages=album_messages,
         )
 
     async def notify_unknown_message(

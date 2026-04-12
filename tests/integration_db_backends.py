@@ -247,8 +247,10 @@ class DatabaseBackendsIntegrationTests(unittest.TestCase):
                 "telegram_messages"
             )
         }
+        self.assertIn("grouped_id", telegram_message_columns)
         self.assertIn("media_file_name", telegram_message_columns)
         self.assertIn("media_mime_type", telegram_message_columns)
+        self.assertIn("media_document_attributes", telegram_message_columns)
 
     def test_preload_checkpoint_lifecycle_with_ansi_sql(self) -> None:
         chat_peer_pk = self._insert_peer(peer_id=3001, access_hash=6001, peer_type=2)

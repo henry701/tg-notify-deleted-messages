@@ -420,6 +420,73 @@ class GetOnMessageDeletedTests(unittest.IsolatedAsyncioTestCase):
             "DELETED_MESSAGES_NOTIFICATION_CONCURRENCY": "1",
         },
     )
+    async def test_groups_deleted_album_messages_into_single_notification(self):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        notify_del = AsyncMock()
+        notify_unknown = AsyncMock()
+        gather_func = AsyncMock(side_effect=self._await_all)
+
+        first_message = MagicMock()
+        first_message.id = 10
+        first_message.grouped_id = 555
+        first_message.media = b"first"
+        first_message.timestamp = datetime(2026, 4, 12, 12, 0, tzinfo=timezone.utc)
+
+        second_message = MagicMock()
+        second_message.id = 11
+        second_message.grouped_id = 555
+        second_message.media = b"second"
+        second_message.timestamp = datetime(2026, 4, 12, 12, 1, tzinfo=timezone.utc)
+
+        with patch(
+            "packages.event_orchestration.load_messages_from_deleted_event",
+            new_callable=AsyncMock,
+        ) as load_mock:
+            load_mock.return_value = (
+                [second_message, first_message],
+                MagicMock(),
+                [],
+                [],
+            )
+
+            handler = get_on_message_deleted(
+                client_mock,
+                session_maker_mock,
+                notify_del,
+                notify_unknown,
+                gather_func,
+            )
+            event_mock = AsyncMock()
+            event_mock.deleted_ids = [10, 11]
+            await handler(event_mock)
+
+        notify_del.assert_awaited_once()
+        notified_message = notify_del.await_args.args[0]
+        self.assertEqual(
+            [message.id for message in notified_message.album_messages], [10, 11]
+        )
+        notify_unknown.assert_not_called()
+
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+            "NOTIFY_OUTGOING_MESSAGES": "True",
+            "DELETED_MESSAGES_NOTIFICATION_CONCURRENCY": "1",
+        },
+    )
     async def test_notifies_unknown_messages(self):
         client_mock = AsyncMock()
         session_maker_mock = MagicMock()
@@ -1297,6 +1364,76 @@ class GetStoreMessageBranchTests(unittest.IsolatedAsyncioTestCase):
             result = await store_fn(message_mock)
             self.assertTrue(result)
             session_mock.merge.assert_called_once()
+
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+        },
+    )
+    async def test_stores_grouped_id_and_audio_document_attributes(self):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        store_fn = get_store_message(session_maker_mock, client_mock)
+
+        message_mock = AsyncMock()
+        message_mock.id = 1
+        message_mock.grouped_id = 777
+        message_mock.message = "voice note"
+        message_mock.from_id = None
+        message_mock.peer_id = MagicMock()
+        message_mock.media = MagicMock(name="media-marker")
+        message_mock.date = datetime(2026, 4, 12, 12, 30, tzinfo=timezone.utc)
+        message_mock.file = MagicMock()
+        message_mock.file.name = "voice.ogg"
+        message_mock.file.mime_type = "audio/ogg"
+        message_mock.document = MagicMock()
+        message_mock.document.attributes = [
+            telethon.types.DocumentAttributeAudio(
+                duration=12,
+                voice=True,
+                title="Voice",
+                performer="Henrique",
+                waveform=b"\x00\x01",
+            )
+        ]
+
+        user_mock = MagicMock()
+        user_mock.id = 123
+        message_mock.get_chat = AsyncMock(return_value=user_mock)
+
+        with (
+            patch(
+                "packages.event_orchestration.build_telegram_peer",
+                new_callable=AsyncMock,
+            ) as build_peer,
+            patch(
+                "packages.event_orchestration.get_message_media_blob",
+                new_callable=AsyncMock,
+            ) as get_blob,
+        ):
+            build_peer.return_value = None
+            get_blob.return_value = b"voice-bytes"
+            result = await store_fn(message_mock)
+
+        self.assertTrue(result)
+        merged_message = session_mock.merge.call_args.args[0]
+        self.assertEqual(merged_message.grouped_id, 777)
+        self.assertEqual(merged_message.media, b"voice-bytes")
+        self.assertEqual(merged_message.media_file_name, "voice.ogg")
+        self.assertEqual(merged_message.media_mime_type, "audio/ogg")
+        self.assertIn('"type":"audio"', merged_message.media_document_attributes)
 
     @patch.dict(
         "os.environ",

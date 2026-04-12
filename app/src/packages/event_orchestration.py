@@ -26,7 +26,9 @@ from packages.restart_manager import update_last_activity
 from packages.telegram_helpers import (
     build_telegram_peer,
     get_canonical_message_text,
+    get_message_grouped_id,
     get_message_media_metadata,
+    serialize_message_document_attributes,
 )
 
 logger = logging.getLogger("tgdel-event-orchestration")
@@ -35,6 +37,59 @@ download_semaphore = asyncio.Semaphore(
     int(os.getenv("MEDIA_DOWNLOADS_CONCURRENCY", "1"))
 )
 file_size_threshold = int(os.getenv("MEDIA_FILE_SIZE_THRESHOLD", "0"))
+
+
+def group_deleted_messages_for_notification(
+    messages: list[TelegramMessage],
+) -> list[list[TelegramMessage]]:
+    def normalize_grouped_id(raw_grouped_id) -> int | None:
+        if raw_grouped_id is None:
+            return None
+        try:
+            return int(str(raw_grouped_id))
+        except (TypeError, ValueError):
+            return None
+
+    grouped_messages: dict[int, list[TelegramMessage]] = {}
+    for message in messages:
+        normalized_grouped_id = normalize_grouped_id(
+            getattr(message, "grouped_id", None)
+        )
+        if normalized_grouped_id is None:
+            continue
+        if normalized_grouped_id not in grouped_messages:
+            grouped_messages[normalized_grouped_id] = []
+        grouped_messages[normalized_grouped_id].append(message)
+
+    notification_batches: list[list[TelegramMessage]] = []
+    used_grouped_ids: set[int] = set()
+    for message in sorted(
+        messages,
+        key=lambda current_message: int(str(getattr(current_message, "id", 0))),
+    ):
+        normalized_grouped_id = normalize_grouped_id(
+            getattr(message, "grouped_id", None)
+        )
+        if normalized_grouped_id is None:
+            notification_batches.append([message])
+            continue
+        if normalized_grouped_id in used_grouped_ids:
+            continue
+        grouped_batch = sorted(
+            grouped_messages.get(normalized_grouped_id, [message]),
+            key=lambda current_message: int(str(getattr(current_message, "id", 0))),
+        )
+        used_grouped_ids.add(normalized_grouped_id)
+        if len(grouped_batch) > 1 and all(
+            getattr(current_message, "media", None) is not None
+            for current_message in grouped_batch
+        ):
+            notification_batches.append(grouped_batch)
+        else:
+            notification_batches.extend(
+                [[current_message] for current_message in grouped_batch]
+            )
+    return notification_batches
 
 
 async def load_messages_from_deleted_event(
@@ -156,8 +211,15 @@ def get_on_message_deleted(
                 )
 
         awaitables: list[Awaitable[Any]] = []
-        for message in messages:
-            awaitables.append(notify_message_deletion(message, client))
+        for notification_batch in group_deleted_messages_for_notification(messages):
+            if len(notification_batch) == 1:
+                awaitables.append(
+                    notify_message_deletion(notification_batch[0], client)
+                )
+                continue
+            notification_message = copy.copy(notification_batch[0])
+            notification_message.album_messages = notification_batch
+            awaitables.append(notify_message_deletion(notification_message, client))
         if unloaded_ids and len(unloaded_ids):
             awaitables.append(notify_unknown_message(unloaded_ids, event, client))
         if len(awaitables) > 0:
@@ -452,12 +514,25 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
         built_chat_peer = await build_telegram_peer(
             message.peer_id, client, sqlalchemy_session_maker
         )
+        grouped_id = get_message_grouped_id(message)
         blob = await get_message_media_blob(message)
         media_file_name, media_mime_type = get_message_media_metadata(message)
+        media_document_attributes = serialize_message_document_attributes(message)
 
         with sqlalchemy_session_maker.begin() as sqlalchemy_session:
             previous_latest_message = None
-            if getattr(message, "media", None):
+            if (
+                built_chat_peer is not None
+                and (getattr(message, "media", None) is not None or grouped_id is None)
+                and getattr(message, "edit_date", None) is not None
+            ):
+                previous_latest_message = load_previous_latest_message(
+                    sqlalchemy_session
+                )
+            elif (
+                built_chat_peer is not None
+                and getattr(message, "media", None) is not None
+            ):
                 previous_latest_message = load_previous_latest_message(
                     sqlalchemy_session
                 )
@@ -468,9 +543,17 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
             inherited_blob = (
                 previous_latest_message.media if reusing_previous_media_blob else blob
             )
+            inherited_grouped_id = (
+                previous_latest_message.grouped_id
+                if previous_latest_message is not None and grouped_id is None
+                else grouped_id
+            )
             if reusing_previous_media_blob:
                 inherited_media_file_name = previous_latest_message.media_file_name
                 inherited_media_mime_type = previous_latest_message.media_mime_type
+                inherited_media_document_attributes = (
+                    previous_latest_message.media_document_attributes
+                )
             else:
                 inherited_media_file_name = (
                     previous_latest_message.media_file_name
@@ -482,6 +565,12 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
                     if previous_latest_message is not None and media_mime_type is None
                     else media_mime_type
                 )
+                inherited_media_document_attributes = (
+                    previous_latest_message.media_document_attributes
+                    if previous_latest_message is not None
+                    and media_document_attributes is None
+                    else media_document_attributes
+                )
 
             edit_date = getattr(message, "edit_date", None) or message.date
             orm_message = TelegramMessage(
@@ -489,9 +578,11 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
                 from_peer=built_from_peer,
                 chat_peer=built_chat_peer,
                 text=message.message,
+                grouped_id=inherited_grouped_id,
                 media=inherited_blob,
                 media_file_name=inherited_media_file_name,
                 media_mime_type=inherited_media_mime_type,
+                media_document_attributes=inherited_media_document_attributes,
                 timestamp=message.date,
                 edit_date=edit_date,
             )

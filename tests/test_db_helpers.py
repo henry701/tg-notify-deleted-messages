@@ -168,7 +168,12 @@ class DbHelpersTests(unittest.TestCase):
     def test_additive_migrations_include_attachment_metadata_columns(self) -> None:
         self.assertEqual(
             ADDITIVE_COLUMN_MIGRATIONS["telegram_messages"],
-            ("media_file_name", "media_mime_type"),
+            (
+                "grouped_id",
+                "media_file_name",
+                "media_mime_type",
+                "media_document_attributes",
+            ),
         )
 
     def test_apply_additive_migrations_adds_missing_message_attachment_columns(
@@ -206,7 +211,9 @@ class DbHelpersTests(unittest.TestCase):
                     "telegram_messages"
                 )
             }
+            self.assertIn("grouped_id", columns)
             self.assertIn("media_file_name", columns)
             self.assertIn("media_mime_type", columns)
+            self.assertIn("media_document_attributes", columns)
         finally:
             engine.dispose()

@@ -48,21 +48,21 @@ class BotAssistantNotifyTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "packages.bot_assistant.format_default_message_text",
+                "packages.bot_assistant.format_default_message_batch_texts",
                 new_callable=AsyncMock,
             ) as fmt_mock,
             patch(
-                "packages.bot_assistant.send_stored_message_with_optional_media",
+                "packages.bot_assistant.send_stored_messages_with_optional_media",
                 new_callable=AsyncMock,
             ) as send_mock,
         ):
-            fmt_mock.return_value = "formatted text"
+            fmt_mock.return_value = ["formatted text"]
             await bot.notify_message_deletion(message_mock, client_mock)
             send_mock.assert_awaited_once_with(
                 sender_client=bot.client,
                 entity="me",
-                formatted_text="formatted text",
-                message=message_mock,
+                formatted_texts=["formatted text"],
+                messages=[message_mock],
             )
 
     async def test_notify_unknown_message(self):

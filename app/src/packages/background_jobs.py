@@ -218,15 +218,11 @@ async def preload_messages(
         )
 
     try:
-        dialog_coros = []
-        dialog: telethon.tl.custom.dialog.Dialog = None
-        async for dialog in client.iter_dialogs():
-            dialog_coros.append(preload_messages_for_dialog(dialog))
-        if len(dialog_coros) > 0:
-            await gather_with_concurrency(
-                int(os.getenv("PRELOAD_MESSAGES_DIALOG_CONCURRENCY", "8")),
-                *dialog_coros,
-            )
+        await iterate_dialogs_with_concurrency(
+            client.iter_dialogs(),
+            preload_messages_for_dialog,
+            int(os.getenv("PRELOAD_MESSAGES_DIALOG_CONCURRENCY", "8")),
+        )
         logger.info(
             f"Preloading finished! Existing message preloaded count: {preloaded_messages}. Total messages iterated: {iterated_messages}"
         )
@@ -242,3 +238,38 @@ async def gather_with_concurrency(n, *coros):
             return await coro
 
     return await asyncio.gather(*(sem_coro(c) for c in coros))
+
+
+async def iterate_dialogs_with_concurrency(
+    dialogs_async_iterable,
+    dialog_handler,
+    concurrency_limit: int,
+):
+    effective_concurrency_limit = max(concurrency_limit, 1)
+    active_tasks: set[asyncio.Task] = set()
+
+    async def drain_one_completed_task():
+        nonlocal active_tasks
+        if not active_tasks:
+            return
+        done, pending = await asyncio.wait(
+            active_tasks,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        active_tasks = set(pending)
+        for task in done:
+            task.result()
+
+    try:
+        async for dialog in dialogs_async_iterable:
+            active_tasks.add(asyncio.create_task(dialog_handler(dialog)))
+            if len(active_tasks) >= effective_concurrency_limit:
+                await drain_one_completed_task()
+        while active_tasks:
+            await drain_one_completed_task()
+    except Exception:
+        for task in active_tasks:
+            task.cancel()
+        if active_tasks:
+            await asyncio.gather(*active_tasks, return_exceptions=True)
+        raise

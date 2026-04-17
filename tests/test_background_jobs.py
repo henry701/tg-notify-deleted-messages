@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from packages.background_jobs import (
     clean_old_messages_loop,
+    iterate_dialogs_with_concurrency,
     gather_with_concurrency,
     messages_ttl_delta,
     preload_messages,
@@ -842,6 +843,40 @@ class GatherWithConcurrencyTests(unittest.IsolatedAsyncioTestCase):
     async def test_empty_coros(self):
         result = await gather_with_concurrency(1)
         self.assertEqual(list(result), [])
+
+
+class IterateDialogsWithConcurrencyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_limits_active_dialog_tasks(self):
+        max_concurrent = 0
+        current = 0
+
+        async def dialogs_gen():
+            for dialog_id in range(4):
+                yield dialog_id
+
+        async def handler(dialog_id):
+            nonlocal max_concurrent, current
+            current += 1
+            max_concurrent = max(max_concurrent, current)
+            await asyncio.sleep(0.01)
+            current -= 1
+            return dialog_id
+
+        await iterate_dialogs_with_concurrency(dialogs_gen(), handler, 2)
+        self.assertLessEqual(max_concurrent, 2)
+
+    async def test_zero_concurrency_falls_back_to_one(self):
+        seen = []
+
+        async def dialogs_gen():
+            for dialog_id in range(2):
+                yield dialog_id
+
+        async def handler(dialog_id):
+            seen.append(dialog_id)
+
+        await iterate_dialogs_with_concurrency(dialogs_gen(), handler, 0)
+        self.assertEqual(seen, [0, 1])
 
 
 class MessagesTtlDeltaTests(unittest.TestCase):

@@ -36,7 +36,10 @@ logger = logging.getLogger("tgdel-event-orchestration")
 download_semaphore = asyncio.Semaphore(
     int(os.getenv("MEDIA_DOWNLOADS_CONCURRENCY", "1"))
 )
-file_size_threshold = int(os.getenv("MEDIA_FILE_SIZE_THRESHOLD", "0"))
+DEFAULT_MEDIA_FILE_SIZE_THRESHOLD = 50_000_000
+file_size_threshold = int(
+    os.getenv("MEDIA_FILE_SIZE_THRESHOLD", str(DEFAULT_MEDIA_FILE_SIZE_THRESHOLD))
+)
 
 
 def group_deleted_messages_for_notification(
@@ -478,6 +481,19 @@ async def get_message_media_blob(message: telethon.tl.custom.message.Message):
             and message_file_size > file_size_threshold
         )
     ):
+        if (
+            message
+            and message.media
+            and message_file
+            and file_size_threshold > 0
+            and message_file_size is not None
+            and message_file_size > file_size_threshold
+        ):
+            logger.info(
+                "Skipping file download with %s bytes size because it exceeds MEDIA_FILE_SIZE_THRESHOLD=%s",
+                message_file_size,
+                file_size_threshold,
+            )
         return None
     async with download_semaphore:
         logger.info("Downloading file with %s bytes size", message_file_size)

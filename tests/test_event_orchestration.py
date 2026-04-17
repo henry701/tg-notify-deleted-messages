@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import telethon.types
 from packages.event_orchestration import (
+    DEFAULT_MEDIA_FILE_SIZE_THRESHOLD,
     add_event_handlers,
     get_message_media_blob,
     get_on_message_deleted,
@@ -111,6 +112,9 @@ class GetShouldIgnoreMessageTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GetMessageMediaBlobTests(unittest.IsolatedAsyncioTestCase):
+    def test_default_media_threshold_matches_example_config(self):
+        self.assertEqual(DEFAULT_MEDIA_FILE_SIZE_THRESHOLD, 50_000_000)
+
     async def test_returns_none_for_no_media(self):
         message_mock = MagicMock()
         message_mock.media = None

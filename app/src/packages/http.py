@@ -18,7 +18,6 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt
 from packages.background_jobs import preload_messages
 from packages.bot_assistant import BotAssistant
 from packages.env_helpers import require_env
-from packages.models.root.TelegramMessage import TelegramMessage
 from packages.models.support.PeerType import PeerType
 from packages.preload_checkpoints import (
     clear_all_preload_checkpoints,
@@ -372,7 +371,7 @@ def add_informative_routes(
         try:
             logger.debug("Querying database on health endpoint")
             with sqlalchemy_session_maker.begin() as sqlalchemy_session:
-                sqlalchemy_session.execute(select(TelegramMessage).limit(1))
+                sqlalchemy_session.execute(select(sqlalchemy.literal(1)))
         except Exception as e:
             return log_and_return_500(f"Database Error on health query: {e}")
         logger.debug("Checking Telegram Client Communication")

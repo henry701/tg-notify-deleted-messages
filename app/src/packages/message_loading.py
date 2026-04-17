@@ -2,7 +2,6 @@
 
 import telethon
 from sqlalchemy import func
-from sqlalchemy.orm import aliased
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import select
 from telethon import TelegramClient
@@ -14,6 +13,20 @@ from packages.filtering import (
 from packages.models.root.TelegramMessage import TelegramMessage
 from packages.models.root.TelegramPeer import TelegramPeer
 from packages.models.support.PeerType import PeerType
+
+
+def apply_peer_filters_to_message_query(the_query, peer_entity):
+    peer_entity_id = peer_entity.id if peer_entity is not None else None
+    if peer_entity_id is not None:
+        the_query = the_query.where(
+            TelegramMessage.chat_peer.has(TelegramPeer.peer_id == peer_entity_id)
+        )
+    chat_peer_type = PeerType.from_type(type(peer_entity))
+    if chat_peer_type is not None:
+        the_query = the_query.where(
+            TelegramMessage.chat_peer.has(TelegramPeer.type == chat_peer_type)
+        )
+    return the_query
 
 
 async def load_latest_messages_from_db(
@@ -43,17 +56,7 @@ async def load_latest_messages_from_db(
         & (TelegramMessage.chat_peer_id == subq.c.chat_peer_id)
         & (TelegramMessage.edit_date == subq.c.max_edit_date),
     )
-
-    peer_entity_id = peer_entity.id if peer_entity is not None else None
-    if peer_entity_id is not None:
-        the_query = the_query.where(
-            TelegramMessage.chat_peer.has(TelegramPeer.peer_id == peer_entity_id)
-        )
-    chat_peer_type = PeerType.from_type(type(peer_entity))
-    if chat_peer_type is not None:
-        the_query = the_query.where(
-            TelegramMessage.chat_peer.has(TelegramPeer.type == chat_peer_type)
-        )
+    the_query = apply_peer_filters_to_message_query(the_query, peer_entity)
 
     db_results: list[TelegramMessage] = list(
         sqlalchemy_session.execute(the_query).scalars().all()
@@ -72,6 +75,19 @@ async def load_messages_from_db(
     sqlalchemy_session: Session,
 ) -> tuple:
     return await load_latest_messages_from_db(ids, peer_entity, sqlalchemy_session)
+
+
+async def message_exists_in_db(
+    message_id: int,
+    peer_entity: telethon.types.User
+    | telethon.types.Chat
+    | telethon.types.Channel
+    | None,
+    sqlalchemy_session: Session,
+) -> bool:
+    the_query = select(TelegramMessage.id).where(TelegramMessage.id == message_id).limit(1)
+    the_query = apply_peer_filters_to_message_query(the_query, peer_entity)
+    return sqlalchemy_session.execute(the_query).first() is not None
 
 
 async def load_messages_by_parameters(

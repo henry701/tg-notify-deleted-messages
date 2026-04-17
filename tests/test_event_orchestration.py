@@ -129,7 +129,7 @@ class GetMessageMediaBlobTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
 
     async def test_downloads_when_file_size_is_missing(self):
-        message_mock = AsyncMock()
+        message_mock = MagicMock()
         message_mock.media = True
         message_mock.file = MagicMock()
         message_mock.file.size = None
@@ -137,7 +137,8 @@ class GetMessageMediaBlobTests(unittest.IsolatedAsyncioTestCase):
 
         result = await get_message_media_blob(message_mock)
 
-        self.assertEqual(result, b"data")
+        self.assertIsNone(result)
+        message_mock.download_media.assert_not_called()
 
     async def test_returns_none_for_none_message(self):
         result = await get_message_media_blob(None)
@@ -1245,7 +1246,7 @@ class GetMessageMediaBlobThresholdTests(unittest.IsolatedAsyncioTestCase):
 
     @patch("packages.event_orchestration.file_size_threshold", 1000)
     async def test_downloads_when_file_size_is_unknown(self):
-        message_mock = AsyncMock()
+        message_mock = MagicMock()
         message_mock.media = True
         message_mock.file = MagicMock()
         message_mock.file.size = None
@@ -1253,7 +1254,8 @@ class GetMessageMediaBlobThresholdTests(unittest.IsolatedAsyncioTestCase):
 
         result = await get_message_media_blob(message_mock)
 
-        self.assertEqual(result, b"data")
+        self.assertIsNone(result)
+        message_mock.download_media.assert_not_called()
 
 
 class GetStoreMessageBranchTests(unittest.IsolatedAsyncioTestCase):
@@ -1674,12 +1676,11 @@ class GetStoreMessageIfNotExistsTests(unittest.IsolatedAsyncioTestCase):
         user_mock.id = 123
         message_mock.get_chat = AsyncMock(return_value=user_mock)
 
-        existing_msg = MagicMock()
         with patch(
-            "packages.event_orchestration.load_messages_from_db",
+            "packages.event_orchestration.message_exists_in_db",
             new_callable=AsyncMock,
-        ) as load_mock:
-            load_mock.return_value = (MagicMock(), [existing_msg], [])
+        ) as message_exists_mock:
+            message_exists_mock.return_value = True
             result = await store_fn(message_mock)
             self.assertFalse(result)
 

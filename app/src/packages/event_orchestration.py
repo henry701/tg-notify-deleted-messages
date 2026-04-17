@@ -20,7 +20,10 @@ from telethon.events import MessageDeleted, MessageEdited, NewMessage
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
 
 from packages.filtering import raw_should_ignore_message_chat
-from packages.message_loading import load_messages_by_parameters, load_messages_from_db
+from packages.message_loading import (
+    load_messages_by_parameters,
+    message_exists_in_db,
+)
 from packages.models.root.TelegramMessage import TelegramMessage
 from packages.restart_manager import update_last_activity
 from packages.telegram_helpers import (
@@ -475,6 +478,7 @@ async def get_message_media_blob(message: telethon.tl.custom.message.Message):
         not message
         or not message.media
         or not message_file
+        or message_file_size is None
         or (
             file_size_threshold > 0
             and message_file_size is not None
@@ -493,6 +497,10 @@ async def get_message_media_blob(message: telethon.tl.custom.message.Message):
                 "Skipping file download with %s bytes size because it exceeds MEDIA_FILE_SIZE_THRESHOLD=%s",
                 message_file_size,
                 file_size_threshold,
+            )
+        elif message and message.media and message_file and message_file_size is None:
+            logger.info(
+                "Skipping file download because Telegram did not provide a file size"
             )
         return None
     async with download_semaphore:
@@ -625,13 +633,12 @@ def get_store_message_if_not_exists(
             return False
         peer_entity = await message.get_chat()
         with sqlalchemy_session_maker.begin() as sqlalchemy_session:
-            (the_query, messages, unloaded_ids) = await load_messages_from_db(
-                [message.id],
+            message_exists = await message_exists_in_db(
+                message.id,
                 peer_entity,
                 sqlalchemy_session,
             )
-            # Message already exists, ignore
-            if len(messages) > 0:
+            if message_exists:
                 return False
         return await store_message(message)
 

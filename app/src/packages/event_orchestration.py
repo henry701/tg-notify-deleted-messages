@@ -58,6 +58,12 @@ class MediaDownloadThresholdExceededError(Exception):
         self.byte_limit = byte_limit
 
 
+class MessageMediaBlobLoadResult:
+    def __init__(self, blob: bytes | None, allow_previous_media_reuse: bool):
+        self.blob = blob
+        self.allow_previous_media_reuse = allow_previous_media_reuse
+
+
 class LimitedMediaBuffer:
     def __init__(self, byte_limit: int | None):
         self.byte_limit = byte_limit
@@ -547,7 +553,7 @@ def get_should_ignore_message_chat(client: TelegramClient):
 
 
 @retry(retry=retry_if_exception_type(IOError), stop=stop_after_attempt(3))
-async def get_message_media_blob(message: telethon.tl.custom.message.Message):
+async def get_message_media_blob_result(message: telethon.tl.custom.message.Message):
     if message is not None and not should_persist_message_media(message):
         log_with_runtime_snapshot(
             logger,
@@ -555,7 +561,10 @@ async def get_message_media_blob(message: telethon.tl.custom.message.Message):
             "Skipping media persistence for non-persistable media type=%s",
             type(getattr(message, "media", None)).__name__,
         )
-        return None
+        return MessageMediaBlobLoadResult(
+            blob=None,
+            allow_previous_media_reuse=False,
+        )
     message_file = getattr(message, "file", None) if message is not None else None
     message_file_size = getattr(message_file, "size", None)
     if (
@@ -584,13 +593,20 @@ async def get_message_media_blob(message: telethon.tl.custom.message.Message):
                 message_file_size,
                 file_size_threshold,
             )
+            return MessageMediaBlobLoadResult(
+                blob=None,
+                allow_previous_media_reuse=False,
+            )
         elif message and message.media and message_file and message_file_size is None:
             log_with_runtime_snapshot(
                 logger,
                 logging.INFO,
                 "Skipping file download because Telegram did not provide a file size",
             )
-        return None
+        return MessageMediaBlobLoadResult(
+            blob=None,
+            allow_previous_media_reuse=True,
+        )
     async with download_semaphore:
         log_with_runtime_snapshot(
             logger,
@@ -612,7 +628,10 @@ async def get_message_media_blob(message: telethon.tl.custom.message.Message):
                     e.attempted_bytes,
                     e.byte_limit,
                 )
-                return None
+                return MessageMediaBlobLoadResult(
+                    blob=None,
+                    allow_previous_media_reuse=False,
+                )
             limited_media_buffer.seek(0)
             downloaded_blob = limited_media_buffer.read()
         log_with_runtime_snapshot(
@@ -622,7 +641,15 @@ async def get_message_media_blob(message: telethon.tl.custom.message.Message):
             message_file_size,
             len(downloaded_blob) if downloaded_blob is not None else None,
         )
-        return downloaded_blob
+        return MessageMediaBlobLoadResult(
+            blob=downloaded_blob,
+            allow_previous_media_reuse=True,
+        )
+
+
+@retry(retry=retry_if_exception_type(IOError), stop=stop_after_attempt(3))
+async def get_message_media_blob(message: telethon.tl.custom.message.Message):
+    return (await get_message_media_blob_result(message)).blob
 
 
 def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramClient):
@@ -657,7 +684,8 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
         )
         grouped_id = get_message_grouped_id(message)
         should_persist_media = should_persist_message_media(message)
-        blob = await get_message_media_blob(message)
+        media_blob_load_result = await get_message_media_blob_result(message)
+        blob = media_blob_load_result.blob
         media_file_name, media_mime_type = get_message_media_metadata(message)
         media_document_attributes = serialize_message_document_attributes(message)
 
@@ -679,8 +707,16 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
                     sqlalchemy_session
                 )
 
+            should_clear_media_state = (
+                blob is None
+                and should_persist_media
+                and not media_blob_load_result.allow_previous_media_reuse
+            )
             reusing_previous_media_blob = (
-                blob is None and previous_latest_message is not None and should_persist_media
+                blob is None
+                and previous_latest_message is not None
+                and should_persist_media
+                and media_blob_load_result.allow_previous_media_reuse
             )
             inherited_blob = (
                 previous_latest_message.media
@@ -692,7 +728,7 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
                 if previous_latest_message is not None and grouped_id is None
                 else grouped_id
             )
-            if not should_persist_media:
+            if not should_persist_media or should_clear_media_state:
                 inherited_media_file_name = None
                 inherited_media_mime_type = None
                 inherited_media_document_attributes = None

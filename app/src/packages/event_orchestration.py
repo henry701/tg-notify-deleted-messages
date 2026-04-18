@@ -26,6 +26,7 @@ from packages.message_loading import (
 )
 from packages.models.root.TelegramMessage import TelegramMessage
 from packages.restart_manager import update_last_activity
+from packages.runtime_diagnostics import format_process_runtime_snapshot
 from packages.telegram_helpers import (
     build_telegram_peer,
     get_canonical_message_text,
@@ -494,18 +495,31 @@ async def get_message_media_blob(message: telethon.tl.custom.message.Message):
             and message_file_size > file_size_threshold
         ):
             logger.info(
-                "Skipping file download with %s bytes size because it exceeds MEDIA_FILE_SIZE_THRESHOLD=%s",
+                "Skipping file download with %s bytes size because it exceeds MEDIA_FILE_SIZE_THRESHOLD=%s | %s",
                 message_file_size,
                 file_size_threshold,
+                format_process_runtime_snapshot(),
             )
         elif message and message.media and message_file and message_file_size is None:
             logger.info(
-                "Skipping file download because Telegram did not provide a file size"
+                "Skipping file download because Telegram did not provide a file size | %s",
+                format_process_runtime_snapshot(),
             )
         return None
     async with download_semaphore:
-        logger.info("Downloading file with %s bytes size", message_file_size)
-        return await message.download_media(file=bytes)
+        logger.info(
+            "Downloading file with %s bytes size | %s",
+            message_file_size,
+            format_process_runtime_snapshot(),
+        )
+        downloaded_blob = await message.download_media(file=bytes)
+        logger.info(
+            "Finished downloading file with %s bytes size. Blob length=%s | %s",
+            message_file_size,
+            len(downloaded_blob) if downloaded_blob is not None else None,
+            format_process_runtime_snapshot(),
+        )
+        return downloaded_blob
 
 
 def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramClient):
@@ -610,7 +624,24 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
                 timestamp=message.date,
                 edit_date=edit_date,
             )
+            if getattr(message, "media", None) is not None:
+                logger.info(
+                    "Persisting message media for message_id=%s chat_peer_id=%s blob_length=%s reused_previous_media=%s grouped_id=%s | %s",
+                    message.id,
+                    int(built_chat_peer.id) if built_chat_peer is not None else None,
+                    len(inherited_blob) if inherited_blob is not None else None,
+                    reusing_previous_media_blob,
+                    inherited_grouped_id,
+                    format_process_runtime_snapshot(),
+                )
             sqlalchemy_session.merge(orm_message)
+            if getattr(message, "media", None) is not None:
+                logger.info(
+                    "Stored message media for message_id=%s chat_peer_id=%s | %s",
+                    message.id,
+                    int(built_chat_peer.id) if built_chat_peer is not None else None,
+                    format_process_runtime_snapshot(),
+                )
             return True
 
     return store_message

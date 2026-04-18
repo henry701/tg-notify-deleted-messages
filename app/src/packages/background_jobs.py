@@ -21,6 +21,7 @@ from packages.preload_checkpoints import (
     get_preload_checkpoint,
     upsert_preload_checkpoint,
 )
+from packages.runtime_diagnostics import format_process_runtime_snapshot
 from packages.telegram_helpers import build_telegram_peer
 
 logger = logging.getLogger("tgdel-background-jobs")
@@ -98,7 +99,10 @@ async def preload_messages(
             except asyncio.CancelledError:
                 return
             logger.info(
-                f"Preloading still in progress. Total so far: {preloaded_messages} preloaded, {iterated_messages} iterated"
+                "Preloading still in progress. Total so far: %s preloaded, %s iterated | %s",
+                preloaded_messages,
+                iterated_messages,
+                format_process_runtime_snapshot(),
             )
 
     preload_messages_status_task = asyncio.create_task(preload_messages_status_loop())
@@ -109,7 +113,11 @@ async def preload_messages(
     should_ignore_message_chat = get_should_ignore_message_chat(client)
 
     async def preload_messages_for_dialog(dialog):
-        logger.debug(f"Preloading existing messages for dialog={dialog.id}")
+        logger.info(
+            "Preloading existing messages for dialog=%s | %s",
+            dialog.id,
+            format_process_runtime_snapshot(),
+        )
 
         peer = dialog.input_entity
         full_peer = await client.get_entity(peer)
@@ -213,8 +221,12 @@ async def preload_messages(
                 sqlalchemy_session_maker=sqlalchemy_session_maker,
             )
 
-        logger.debug(
-            f"Preloaded {preloaded_messages_this_dialog} existing messages for dialog={dialog.id}"
+        logger.info(
+            "Preloaded %s existing messages for dialog=%s after iterating %s messages | %s",
+            preloaded_messages_this_dialog,
+            dialog.id,
+            iterated_messages_this_dialog,
+            format_process_runtime_snapshot(),
         )
 
     try:
@@ -224,7 +236,10 @@ async def preload_messages(
             int(os.getenv("PRELOAD_MESSAGES_DIALOG_CONCURRENCY", "8")),
         )
         logger.info(
-            f"Preloading finished! Existing message preloaded count: {preloaded_messages}. Total messages iterated: {iterated_messages}"
+            "Preloading finished! Existing message preloaded count: %s. Total messages iterated: %s | %s",
+            preloaded_messages,
+            iterated_messages,
+            format_process_runtime_snapshot(),
         )
     finally:
         preload_messages_status_task.cancel()

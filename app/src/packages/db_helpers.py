@@ -4,9 +4,19 @@ import re
 
 import sqlalchemy
 import sqlalchemy_utils
+from sqlalchemy.schema import CreateColumn
 
 import packages.models
 from packages.env_helpers import require_env
+
+ADDITIVE_COLUMN_MIGRATIONS = {
+    "telegram_messages": (
+        "grouped_id",
+        "media_file_name",
+        "media_mime_type",
+        "media_document_attributes",
+    ),
+}
 
 
 def get_db_url():
@@ -22,6 +32,7 @@ def get_db_url():
 def create_database(sqlalchemy_engine):
     metadata = encrypt_database_metadata()
     metadata.create_all(sqlalchemy_engine)
+    apply_additive_migrations(sqlalchemy_engine, metadata)
 
 
 def encrypt_database_metadata():
@@ -33,6 +44,46 @@ def encrypt_database_metadata():
             if should_encrypt_column(column):
                 column.type = packages.models.encrypt_type_searchable(column.type)
     return metadata
+
+
+def apply_additive_migrations(
+    sqlalchemy_engine,
+    metadata: sqlalchemy.schema.MetaData | None = None,
+):
+    if metadata is None:
+        metadata = encrypt_database_metadata()
+    inspector = sqlalchemy.inspect(sqlalchemy_engine)
+    existing_tables = set(inspector.get_table_names())
+    identifier_preparer = sqlalchemy_engine.dialect.identifier_preparer
+    with sqlalchemy_engine.begin() as connection:
+        for table_name, column_names in ADDITIVE_COLUMN_MIGRATIONS.items():
+            if table_name not in existing_tables:
+                continue
+            table = metadata.tables.get(table_name)
+            if table is None:
+                continue
+            existing_columns = {
+                column_data["name"] for column_data in inspector.get_columns(table_name)
+            }
+            formatted_table_name = identifier_preparer.format_table(table)
+            for column_name in column_names:
+                if column_name in existing_columns:
+                    continue
+                column = table.columns[column_name]
+                add_column_sql = str(
+                    CreateColumn(column).compile(dialect=sqlalchemy_engine.dialect)
+                ).strip()
+                connection.execute(
+                    sqlalchemy.text(
+                        f"ALTER TABLE {formatted_table_name} ADD COLUMN {add_column_sql}"
+                    )
+                )
+                existing_columns.add(column_name)
+                logging.info(
+                    "Added missing nullable column %s.%s during startup migration",
+                    table_name,
+                    column_name,
+                )
 
 
 def should_encrypt_column_traverser(col: sqlalchemy.Column):

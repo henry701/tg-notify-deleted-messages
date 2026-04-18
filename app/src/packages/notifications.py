@@ -8,10 +8,12 @@ from telethon.events.messagedeleted import MessageDeleted
 from packages.models.root.TelegramMessage import TelegramMessage
 from packages.telegram_helpers import (
     build_peer_entity,
+    format_default_message_batch_texts,
     format_default_message_edit_text,
-    format_default_message_text,
     format_default_unknown_message_text,
     get_mention_text as get_entity_mention_text,
+    send_stored_messages_with_optional_media,
+    send_stored_message_with_optional_media,
 )
 
 
@@ -21,9 +23,16 @@ def get_base_notify_message_deletion(
     async def base_notify_message_deletion(
         message: TelegramMessage, client: TelegramClient
     ):
+        raw_album_messages = getattr(message, "album_messages", None)
+        album_messages = (
+            raw_album_messages
+            if isinstance(raw_album_messages, list) and len(raw_album_messages) > 0
+            else [message]
+        )
         with sqlalchemy_session_maker.begin() as session:
-            session.merge(message)
-            message.deleted = True  # type: ignore
+            for stored_message in album_messages:
+                session.merge(stored_message)
+                stored_message.deleted = True  # type: ignore
 
     return base_notify_message_deletion
 
@@ -34,10 +43,19 @@ def get_default_notify_message_deletion() -> Callable[
     async def default_notify_message_deletion(
         message: TelegramMessage, client: TelegramClient
     ):
-        await client.send_message(
+        raw_album_messages = getattr(message, "album_messages", None)
+        album_messages = (
+            raw_album_messages
+            if isinstance(raw_album_messages, list) and len(raw_album_messages) > 0
+            else [message]
+        )
+        await send_stored_messages_with_optional_media(
+            sender_client=client,
             entity="me",
-            message=await format_default_message_text(client, message),  # type: ignore
-            file=message.media,  # type: ignore
+            formatted_texts=await format_default_message_batch_texts(
+                client, album_messages
+            ),
+            messages=album_messages,
         )
 
     return default_notify_message_deletion
@@ -76,10 +94,11 @@ def get_default_notify_message_edit() -> Callable[
     async def default_notify_message_edit(
         message: TelegramMessage, client: TelegramClient
     ):
-        await client.send_message(
+        await send_stored_message_with_optional_media(
+            sender_client=client,
             entity="me",
-            message=await format_default_message_edit_text(client, message),
-            file=message.media,  # type: ignore
+            formatted_text=await format_default_message_edit_text(client, message),
+            message=message,
         )
 
     return default_notify_message_edit

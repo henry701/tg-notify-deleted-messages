@@ -18,7 +18,6 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt
 from packages.background_jobs import preload_messages
 from packages.bot_assistant import BotAssistant
 from packages.env_helpers import require_env
-from packages.models.root.TelegramMessage import TelegramMessage
 from packages.models.support.PeerType import PeerType
 from packages.preload_checkpoints import (
     clear_all_preload_checkpoints,
@@ -27,6 +26,7 @@ from packages.preload_checkpoints import (
     list_preload_checkpoints,
     upsert_preload_checkpoint,
 )
+from packages.runtime_diagnostics import log_with_runtime_snapshot
 
 logger = logging.getLogger("tgdel-http")
 
@@ -372,7 +372,7 @@ def add_informative_routes(
         try:
             logger.debug("Querying database on health endpoint")
             with sqlalchemy_session_maker.begin() as sqlalchemy_session:
-                sqlalchemy_session.execute(select(TelegramMessage).limit(1))
+                sqlalchemy_session.execute(select(sqlalchemy.literal(1)))
         except Exception as e:
             return log_and_return_500(f"Database Error on health query: {e}")
         logger.debug("Checking Telegram Client Communication")
@@ -396,5 +396,5 @@ def add_informative_routes(
         return flask.Response(status=204)
 
     def log_and_return_500(message: str):
-        logger.error(message, exc_info=True)
+        log_with_runtime_snapshot(logger, logging.ERROR, "%s", message, exc_info=True)
         return flask.Response(message, status=500)

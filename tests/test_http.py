@@ -620,6 +620,8 @@ class HealthRouteTests(unittest.TestCase):
         with flask_app.test_client() as client:
             response = client.get("/health")
             self.assertEqual(response.status_code, 204)
+        health_query = session_mock.execute.call_args.args[0]
+        self.assertNotIn("telegram_messages", str(health_query))
 
     @patch.dict("os.environ", {"PHONE_NUMBER": "123456"})
     def test_health_fails_when_loop_not_running(self):

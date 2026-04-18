@@ -21,6 +21,7 @@ from packages.preload_checkpoints import (
     get_preload_checkpoint,
     upsert_preload_checkpoint,
 )
+from packages.runtime_diagnostics import log_with_runtime_snapshot
 from packages.telegram_helpers import build_telegram_peer
 
 logger = logging.getLogger("tgdel-background-jobs")
@@ -97,8 +98,12 @@ async def preload_messages(
                 await asyncio.sleep(preload_status_report_interval)
             except asyncio.CancelledError:
                 return
-            logger.info(
-                f"Preloading still in progress. Total so far: {preloaded_messages} preloaded, {iterated_messages} iterated"
+            log_with_runtime_snapshot(
+                logger,
+                logging.INFO,
+                "Preloading still in progress. Total so far: %s preloaded, %s iterated",
+                preloaded_messages,
+                iterated_messages,
             )
 
     preload_messages_status_task = asyncio.create_task(preload_messages_status_loop())
@@ -109,7 +114,12 @@ async def preload_messages(
     should_ignore_message_chat = get_should_ignore_message_chat(client)
 
     async def preload_messages_for_dialog(dialog):
-        logger.debug(f"Preloading existing messages for dialog={dialog.id}")
+        log_with_runtime_snapshot(
+            logger,
+            logging.INFO,
+            "Preloading existing messages for dialog=%s",
+            dialog.id,
+        )
 
         peer = dialog.input_entity
         full_peer = await client.get_entity(peer)
@@ -213,22 +223,27 @@ async def preload_messages(
                 sqlalchemy_session_maker=sqlalchemy_session_maker,
             )
 
-        logger.debug(
-            f"Preloaded {preloaded_messages_this_dialog} existing messages for dialog={dialog.id}"
+        log_with_runtime_snapshot(
+            logger,
+            logging.INFO,
+            "Preloaded %s existing messages for dialog=%s after iterating %s messages",
+            preloaded_messages_this_dialog,
+            dialog.id,
+            iterated_messages_this_dialog,
         )
 
     try:
-        dialog_coros = []
-        dialog: telethon.tl.custom.dialog.Dialog = None
-        async for dialog in client.iter_dialogs():
-            dialog_coros.append(preload_messages_for_dialog(dialog))
-        if len(dialog_coros) > 0:
-            await gather_with_concurrency(
-                int(os.getenv("PRELOAD_MESSAGES_DIALOG_CONCURRENCY", "8")),
-                *dialog_coros,
-            )
-        logger.info(
-            f"Preloading finished! Existing message preloaded count: {preloaded_messages}. Total messages iterated: {iterated_messages}"
+        await iterate_dialogs_with_concurrency(
+            client.iter_dialogs(),
+            preload_messages_for_dialog,
+            int(os.getenv("PRELOAD_MESSAGES_DIALOG_CONCURRENCY", "8")),
+        )
+        log_with_runtime_snapshot(
+            logger,
+            logging.INFO,
+            "Preloading finished! Existing message preloaded count: %s. Total messages iterated: %s",
+            preloaded_messages,
+            iterated_messages,
         )
     finally:
         preload_messages_status_task.cancel()
@@ -242,3 +257,38 @@ async def gather_with_concurrency(n, *coros):
             return await coro
 
     return await asyncio.gather(*(sem_coro(c) for c in coros))
+
+
+async def iterate_dialogs_with_concurrency(
+    dialogs_async_iterable,
+    dialog_handler,
+    concurrency_limit: int,
+):
+    effective_concurrency_limit = max(concurrency_limit, 1)
+    active_tasks: set[asyncio.Task] = set()
+
+    async def drain_one_completed_task():
+        nonlocal active_tasks
+        if not active_tasks:
+            return
+        done, pending = await asyncio.wait(
+            active_tasks,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        active_tasks = set(pending)
+        for task in done:
+            task.result()
+
+    try:
+        async for dialog in dialogs_async_iterable:
+            active_tasks.add(asyncio.create_task(dialog_handler(dialog)))
+            if len(active_tasks) >= effective_concurrency_limit:
+                await drain_one_completed_task()
+        while active_tasks:
+            await drain_one_completed_task()
+    except Exception:
+        for task in active_tasks:
+            task.cancel()
+        if active_tasks:
+            await asyncio.gather(*active_tasks, return_exceptions=True)
+        raise

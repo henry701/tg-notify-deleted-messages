@@ -9,7 +9,18 @@ from packages.db_helpers import create_database
 from packages.models.root.PreloadCheckpoint import PreloadCheckpoint  # noqa: F401
 from packages.models.root.TelegramMessage import TelegramMessage  # noqa: F401
 from packages.models.root.TelegramPeer import TelegramPeer  # noqa: F401
-from sqlalchemy import text
+from sqlalchemy import (
+    TIMESTAMP,
+    BigInteger,
+    Boolean,
+    Column,
+    Integer,
+    LargeBinary,
+    MetaData,
+    String,
+    Table,
+    text,
+)
 
 
 def build_test_engine(database_url: str) -> sqlalchemy.Engine:
@@ -196,6 +207,50 @@ class DatabaseBackendsIntegrationTests(unittest.TestCase):
             ).one()
             self.assertEqual(int(remaining_message.id), 9102)
             self.assertEqual(str(remaining_message.text), "new message")
+
+    def test_create_database_migrates_existing_messages_table_with_missing_columns(
+        self,
+    ) -> None:
+        legacy_metadata = MetaData()
+        Table(
+            "telegram_peers",
+            legacy_metadata,
+            Column("id", BigInteger(), primary_key=True),
+            Column("peer_id", BigInteger()),
+            Column("access_hash", BigInteger()),
+            Column("type", Integer()),
+        )
+        Table(
+            "telegram_messages",
+            legacy_metadata,
+            Column("id", BigInteger(), primary_key=True),
+            Column("chat_peer_id", BigInteger(), primary_key=True),
+            Column("edit_date", TIMESTAMP(timezone=True), primary_key=True),
+            Column("from_peer_id", BigInteger()),
+            Column("text", String()),
+            Column("media", LargeBinary()),
+            Column("timestamp", TIMESTAMP(timezone=True)),
+            Column("deleted", Boolean()),
+        )
+
+        with self.engine.begin() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS preload_checkpoints"))
+            conn.execute(text("DROP TABLE IF EXISTS telegram_messages"))
+            conn.execute(text("DROP TABLE IF EXISTS telegram_peers"))
+
+        legacy_metadata.create_all(self.engine)
+        create_database(self.engine)
+
+        telegram_message_columns = {
+            column["name"]
+            for column in sqlalchemy.inspect(self.engine).get_columns(
+                "telegram_messages"
+            )
+        }
+        self.assertIn("grouped_id", telegram_message_columns)
+        self.assertIn("media_file_name", telegram_message_columns)
+        self.assertIn("media_mime_type", telegram_message_columns)
+        self.assertIn("media_document_attributes", telegram_message_columns)
 
     def test_preload_checkpoint_lifecycle_with_ansi_sql(self) -> None:
         chat_peer_pk = self._insert_peer(peer_id=3001, access_hash=6001, peer_type=2)

@@ -1,7 +1,14 @@
+import base64
+import io
+import json
+import mimetypes
+import os
+
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql.expression import select
 from telethon.client.telegramclient import TelegramClient
 from telethon.events.messagedeleted import MessageDeleted
+from telethon.tl import types as tl_types
 from telethon.tl.types import (
     InputEncryptedChat,
     InputPeerChannel,
@@ -145,6 +152,264 @@ def get_canonical_message_text(message) -> str:
     return ""
 
 
+def normalize_optional_string(value) -> str | None:
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def should_persist_message_media(message) -> bool:
+    if message is None:
+        return False
+    media = getattr(message, "media", None)
+    if media is None:
+        return False
+    if isinstance(media, tl_types.MessageMediaWebPage):
+        return False
+    return True
+
+
+def get_message_media_metadata(message) -> tuple[str | None, str | None]:
+    if not should_persist_message_media(message):
+        return (None, None)
+    message_file = getattr(message, "file", None)
+    return (
+        normalize_optional_string(getattr(message_file, "name", None)),
+        normalize_optional_string(getattr(message_file, "mime_type", None)),
+    )
+
+
+def get_message_grouped_id(message) -> int | None:
+    grouped_id = getattr(message, "grouped_id", None) if message is not None else None
+    if grouped_id is None:
+        return None
+    try:
+        return int(str(grouped_id))
+    except (TypeError, ValueError):
+        return None
+
+
+def serialize_message_document_attributes(message) -> str | None:
+    if not should_persist_message_media(message):
+        return None
+    document = getattr(message, "document", None)
+    attributes = getattr(document, "attributes", None)
+    if not attributes:
+        return None
+
+    serialized_attributes = []
+    for attribute in attributes:
+        if isinstance(attribute, tl_types.DocumentAttributeAudio):
+            serialized_attributes.append(
+                {
+                    "type": "audio",
+                    "duration": attribute.duration,
+                    "voice": attribute.voice,
+                    "title": attribute.title,
+                    "performer": attribute.performer,
+                    "waveform": (
+                        base64.b64encode(attribute.waveform).decode("ascii")
+                        if attribute.waveform is not None
+                        else None
+                    ),
+                }
+            )
+        elif isinstance(attribute, tl_types.DocumentAttributeVideo):
+            serialized_attributes.append(
+                {
+                    "type": "video",
+                    "duration": attribute.duration,
+                    "w": attribute.w,
+                    "h": attribute.h,
+                    "round_message": attribute.round_message,
+                    "supports_streaming": attribute.supports_streaming,
+                    "nosound": attribute.nosound,
+                    "preload_prefix_size": attribute.preload_prefix_size,
+                    "video_start_ts": attribute.video_start_ts,
+                    "video_codec": attribute.video_codec,
+                }
+            )
+
+    if not serialized_attributes:
+        return None
+    return json.dumps(serialized_attributes, separators=(",", ":"))
+
+
+def deserialize_stored_document_attributes(
+    message: TelegramMessage,
+) -> list[tl_types.TypeDocumentAttribute] | None:
+    deserialized_attributes: list[tl_types.TypeDocumentAttribute] = []
+    resolved_file_name = resolve_stored_media_file_name(message)
+    if resolved_file_name is not None:
+        deserialized_attributes.append(
+            tl_types.DocumentAttributeFilename(os.path.basename(resolved_file_name))
+        )
+
+    raw_serialized_attributes = normalize_optional_string(
+        getattr(message, "media_document_attributes", None)
+    )
+    if raw_serialized_attributes is None:
+        return deserialized_attributes or None
+
+    try:
+        loaded_attributes = json.loads(raw_serialized_attributes)
+    except json.JSONDecodeError:
+        return deserialized_attributes or None
+
+    if not isinstance(loaded_attributes, list):
+        return deserialized_attributes or None
+
+    for raw_attribute in loaded_attributes:
+        if not isinstance(raw_attribute, dict):
+            continue
+        attribute_type = raw_attribute.get("type")
+        if attribute_type == "audio":
+            waveform = raw_attribute.get("waveform")
+            deserialized_attributes.append(
+                tl_types.DocumentAttributeAudio(
+                    duration=int(raw_attribute.get("duration") or 0),
+                    voice=raw_attribute.get("voice"),
+                    title=normalize_optional_string(raw_attribute.get("title")),
+                    performer=normalize_optional_string(raw_attribute.get("performer")),
+                    waveform=(
+                        base64.b64decode(waveform)
+                        if isinstance(waveform, str) and waveform
+                        else None
+                    ),
+                )
+            )
+        elif attribute_type == "video":
+            deserialized_attributes.append(
+                tl_types.DocumentAttributeVideo(
+                    duration=float(raw_attribute.get("duration") or 0),
+                    w=int(raw_attribute.get("w") or 0),
+                    h=int(raw_attribute.get("h") or 0),
+                    round_message=raw_attribute.get("round_message"),
+                    supports_streaming=raw_attribute.get("supports_streaming"),
+                    nosound=raw_attribute.get("nosound"),
+                    preload_prefix_size=raw_attribute.get("preload_prefix_size"),
+                    video_start_ts=raw_attribute.get("video_start_ts"),
+                    video_codec=normalize_optional_string(
+                        raw_attribute.get("video_codec")
+                    ),
+                )
+            )
+
+    return deserialized_attributes or None
+
+
+def resolve_stored_media_file_name(message: TelegramMessage) -> str | None:
+    stored_file_name = normalize_optional_string(
+        getattr(message, "media_file_name", None)
+    )
+    stored_mime_type = normalize_optional_string(
+        getattr(message, "media_mime_type", None)
+    )
+    guessed_extension = (
+        mimetypes.guess_extension(stored_mime_type, strict=False)
+        if stored_mime_type is not None
+        else None
+    )
+
+    if stored_file_name is not None:
+        if guessed_extension and not os.path.splitext(stored_file_name)[1]:
+            return stored_file_name + guessed_extension
+        return stored_file_name
+    if guessed_extension is not None:
+        return f"attachment{guessed_extension}"
+    return None
+
+
+def build_stored_media_file(message: TelegramMessage) -> io.BytesIO | None:
+    if getattr(message, "media", None) is None:
+        return None
+    media_stream = io.BytesIO(message.media)
+    resolved_file_name = resolve_stored_media_file_name(message)
+    if resolved_file_name is not None:
+        media_stream.name = resolved_file_name
+    media_stream.seek(0)
+    return media_stream
+
+
+async def send_stored_message_with_optional_media(
+    sender_client: TelegramClient,
+    entity,
+    formatted_text: str,
+    message: TelegramMessage,
+):
+    media_stream = build_stored_media_file(message)
+    if media_stream is None:
+        await sender_client.send_message(entity=entity, message=formatted_text)
+        return
+
+    send_file_kwargs = {
+        "entity": entity,
+        "file": media_stream,
+        "caption": formatted_text,
+    }
+    stored_mime_type = normalize_optional_string(
+        getattr(message, "media_mime_type", None)
+    )
+    if stored_mime_type is not None:
+        send_file_kwargs["mime_type"] = stored_mime_type
+    stored_attributes = deserialize_stored_document_attributes(message)
+    if stored_attributes is not None:
+        send_file_kwargs["attributes"] = stored_attributes
+    await sender_client.send_file(**send_file_kwargs)
+
+
+async def send_stored_messages_with_optional_media(
+    sender_client: TelegramClient,
+    entity,
+    formatted_texts: list[str],
+    messages: list[TelegramMessage],
+):
+    if not messages:
+        return
+    if len(messages) == 1:
+        await send_stored_message_with_optional_media(
+            sender_client=sender_client,
+            entity=entity,
+            formatted_text=formatted_texts[0],
+            message=messages[0],
+        )
+        return
+
+    first_grouped_id = getattr(messages[0], "grouped_id", None)
+    media_streams = [build_stored_media_file(message) for message in messages]
+    album_safe_mime_types = all(
+        (normalize_optional_string(getattr(message, "media_mime_type", None)) is None)
+        or normalize_optional_string(
+            getattr(message, "media_mime_type", None)
+        ).startswith(("image/", "video/"))
+        for message in messages
+    )
+    can_send_as_album = (
+        first_grouped_id is not None
+        and all(
+            getattr(message, "grouped_id", None) == first_grouped_id
+            for message in messages
+        )
+        and all(media_stream is not None for media_stream in media_streams)
+        and album_safe_mime_types
+    )
+    if not can_send_as_album:
+        for message, formatted_text in zip(messages, formatted_texts):
+            await send_stored_message_with_optional_media(
+                sender_client=sender_client,
+                entity=entity,
+                formatted_text=formatted_text,
+                message=message,
+            )
+        return
+
+    await sender_client.send_file(
+        entity=entity,
+        file=media_streams,
+        caption=formatted_texts,
+    )
+
+
 def build_chat_link(entity, message_id: int | None = None) -> str | None:
     if entity is None:
         return None
@@ -205,6 +470,45 @@ async def format_default_message_text(
     if message.text:
         text += "**Message Text:** " + message.text
     return text
+
+
+async def format_default_message_batch_texts(
+    client: TelegramClient, messages: list[TelegramMessage]
+) -> list[str]:
+    if not messages:
+        return []
+    if len(messages) == 1:
+        return [await format_default_message_text(client, messages[0])]
+
+    user, chat = await get_message_user_and_chat_entities(
+        client=client, message=messages[0]
+    )
+    mention_username = await get_mention_text(user)
+    mention_chatname = await get_mention_text(chat)
+    chat_reference = format_chat_reference(
+        chat,
+        mention_chatname,
+        message_id=(
+            int(str(messages[0].id))
+            if getattr(messages[0], "id", None) is not None
+            else None
+        ),
+    )
+    texts = [
+        "**Deleted album** ({count} items) from: [{username}](tg://user?id={userid}) on chat {chat_reference}\n".format(
+            count=len(messages),
+            username=mention_username,
+            userid=(str(user.id) if user else "0"),
+            chat_reference=chat_reference,
+        )
+    ]
+    if messages[0].text:
+        texts[0] += "**Message Text:** " + messages[0].text
+    texts.extend(
+        "**Message Text:** " + message.text if message.text else ""
+        for message in messages[1:]
+    )
+    return texts
 
 
 async def format_default_message_edit_text(

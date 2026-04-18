@@ -1,10 +1,12 @@
 import asyncio
 import unittest
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import telethon.types
 from packages.event_orchestration import (
+    DEFAULT_MEDIA_FILE_SIZE_THRESHOLD,
     add_event_handlers,
     get_message_media_blob,
     get_on_message_deleted,
@@ -110,6 +112,9 @@ class GetShouldIgnoreMessageTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GetMessageMediaBlobTests(unittest.IsolatedAsyncioTestCase):
+    def test_default_media_threshold_matches_example_config(self):
+        self.assertEqual(DEFAULT_MEDIA_FILE_SIZE_THRESHOLD, 50_000_000)
+
     async def test_returns_none_for_no_media(self):
         message_mock = MagicMock()
         message_mock.media = None
@@ -123,13 +128,29 @@ class GetMessageMediaBlobTests(unittest.IsolatedAsyncioTestCase):
         result = await get_message_media_blob(message_mock)
         self.assertIsNone(result)
 
-    async def test_returns_none_for_no_file_size(self):
+    async def test_downloads_when_file_size_is_missing(self):
         message_mock = MagicMock()
         message_mock.media = True
         message_mock.file = MagicMock()
         message_mock.file.size = None
+        message_mock.download_media = AsyncMock(return_value=b"data")
+
         result = await get_message_media_blob(message_mock)
+
         self.assertIsNone(result)
+        message_mock.download_media.assert_not_called()
+
+    async def test_returns_none_for_webpage_media(self):
+        message_mock = MagicMock()
+        message_mock.media = telethon.types.MessageMediaWebPage(webpage=MagicMock())
+        message_mock.file = MagicMock()
+        message_mock.file.size = 192663
+        message_mock.download_media = AsyncMock(return_value=b"data")
+
+        result = await get_message_media_blob(message_mock)
+
+        self.assertIsNone(result)
+        message_mock.download_media.assert_not_called()
 
     async def test_returns_none_for_none_message(self):
         result = await get_message_media_blob(None)
@@ -285,10 +306,13 @@ class GetOnNewMessageTests(unittest.IsolatedAsyncioTestCase):
         ) as build_peer:
             build_peer.return_value = None
             with patch(
-                "packages.event_orchestration.get_message_media_blob",
+                "packages.event_orchestration.get_message_media_blob_result",
                 new_callable=AsyncMock,
-            ) as get_blob:
-                get_blob.return_value = None
+            ) as get_blob_result:
+                get_blob_result.return_value = SimpleNamespace(
+                    blob=None,
+                    allow_previous_media_reuse=True,
+                )
                 event_mock.message = message_mock
                 await on_new(event_mock)
 
@@ -403,6 +427,73 @@ class GetOnMessageDeletedTests(unittest.IsolatedAsyncioTestCase):
 
             gather_func.assert_called_once()
             notify_del.assert_called_once_with(mock_message, client_mock)
+
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+            "NOTIFY_OUTGOING_MESSAGES": "True",
+            "DELETED_MESSAGES_NOTIFICATION_CONCURRENCY": "1",
+        },
+    )
+    async def test_groups_deleted_album_messages_into_single_notification(self):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        notify_del = AsyncMock()
+        notify_unknown = AsyncMock()
+        gather_func = AsyncMock(side_effect=self._await_all)
+
+        first_message = MagicMock()
+        first_message.id = 10
+        first_message.grouped_id = 555
+        first_message.media = b"first"
+        first_message.timestamp = datetime(2026, 4, 12, 12, 0, tzinfo=timezone.utc)
+
+        second_message = MagicMock()
+        second_message.id = 11
+        second_message.grouped_id = 555
+        second_message.media = b"second"
+        second_message.timestamp = datetime(2026, 4, 12, 12, 1, tzinfo=timezone.utc)
+
+        with patch(
+            "packages.event_orchestration.load_messages_from_deleted_event",
+            new_callable=AsyncMock,
+        ) as load_mock:
+            load_mock.return_value = (
+                [second_message, first_message],
+                MagicMock(),
+                [],
+                [],
+            )
+
+            handler = get_on_message_deleted(
+                client_mock,
+                session_maker_mock,
+                notify_del,
+                notify_unknown,
+                gather_func,
+            )
+            event_mock = AsyncMock()
+            event_mock.deleted_ids = [10, 11]
+            await handler(event_mock)
+
+        notify_del.assert_awaited_once()
+        notified_message = notify_del.await_args.args[0]
+        self.assertEqual(
+            [message.id for message in notified_message.album_messages], [10, 11]
+        )
+        notify_unknown.assert_not_called()
 
     @patch.dict(
         "os.environ",
@@ -565,6 +656,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         event_mock.message.raw_text = "new text"
         event_mock.message.message = "new text"
         event_mock.message.text = "**new text**"
+        event_mock.message.media = None
 
         with (
             patch(
@@ -630,6 +722,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         event_mock.message.raw_text = ""
         event_mock.message.message = ""
         event_mock.message.text = ""
+        event_mock.message.media = None
 
         with (
             patch(
@@ -686,6 +779,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         mock_message = MagicMock()
         mock_message.id = 1
         mock_message.text = "same text"
+        mock_message.media = None
 
         event_mock = AsyncMock()
         event_mock.message_id = 1
@@ -694,6 +788,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         event_mock.message.raw_text = "same text"
         event_mock.message.message = "same text"
         event_mock.message.text = "same text"
+        event_mock.message.media = None
 
         with (
             patch(
@@ -731,6 +826,132 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
             "EDITED_MESSAGES_NOTIFICATION_CONCURRENCY": "1",
         },
     )
+    async def test_same_text_edit_with_media_still_stores_new_version(self):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        notify_edit = AsyncMock()
+        gather_func = AsyncMock(side_effect=self._await_all)
+
+        mock_message = MagicMock()
+        mock_message.id = 1
+        mock_message.text = "same text"
+        mock_message.media = None
+
+        event_mock = AsyncMock()
+        event_mock.message_id = 1
+        event_mock.get_input_chat = AsyncMock(return_value=None)
+        event_mock.message = MagicMock()
+        event_mock.message.raw_text = "same text"
+        event_mock.message.message = "same text"
+        event_mock.message.text = "same text"
+        event_mock.message.media = MagicMock(name="replacement-media")
+
+        with (
+            patch(
+                "packages.event_orchestration.load_messages_by_parameters",
+                new_callable=AsyncMock,
+            ) as load_mock,
+            patch(
+                "packages.event_orchestration.get_store_message",
+            ) as get_store_message_mock,
+        ):
+            load_mock.return_value = ([mock_message], MagicMock(), [], [])
+            store_message_mock = AsyncMock()
+            get_store_message_mock.return_value = store_message_mock
+
+            handler = get_on_message_edited(
+                client_mock,
+                session_maker_mock,
+                notify_edit,
+                gather_func,
+            )
+            await handler(event_mock)
+
+        notify_edit.assert_not_called()
+        store_message_mock.assert_awaited_once_with(event_mock.message, check_chat=True)
+
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+            "NOTIFY_OUTGOING_MESSAGES": "True",
+            "EDITED_MESSAGES_NOTIFICATION_CONCURRENCY": "1",
+        },
+    )
+    async def test_same_text_edit_with_removed_media_still_stores_new_version(self):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        notify_edit = AsyncMock()
+        gather_func = AsyncMock(side_effect=self._await_all)
+
+        mock_message = MagicMock()
+        mock_message.id = 1
+        mock_message.text = "same text"
+        mock_message.media = b"stored-media"
+
+        event_mock = AsyncMock()
+        event_mock.message_id = 1
+        event_mock.get_input_chat = AsyncMock(return_value=None)
+        event_mock.message = MagicMock()
+        event_mock.message.raw_text = "same text"
+        event_mock.message.message = "same text"
+        event_mock.message.text = "same text"
+        event_mock.message.media = None
+
+        with (
+            patch(
+                "packages.event_orchestration.load_messages_by_parameters",
+                new_callable=AsyncMock,
+            ) as load_mock,
+            patch(
+                "packages.event_orchestration.get_store_message",
+            ) as get_store_message_mock,
+        ):
+            load_mock.return_value = ([mock_message], MagicMock(), [], [])
+            store_message_mock = AsyncMock()
+            get_store_message_mock.return_value = store_message_mock
+
+            handler = get_on_message_edited(
+                client_mock,
+                session_maker_mock,
+                notify_edit,
+                gather_func,
+            )
+            await handler(event_mock)
+
+        notify_edit.assert_not_called()
+        store_message_mock.assert_awaited_once_with(event_mock.message, check_chat=True)
+
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+            "NOTIFY_OUTGOING_MESSAGES": "True",
+            "EDITED_MESSAGES_NOTIFICATION_CONCURRENCY": "1",
+        },
+    )
     async def test_skips_format_only_edit_by_comparing_raw_text(self):
         client_mock = AsyncMock()
         session_maker_mock = MagicMock()
@@ -747,6 +968,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         mock_message = MagicMock()
         mock_message.id = 1
         mock_message.text = "Deleted message from: Henrique"
+        mock_message.media = None
 
         event_mock = AsyncMock()
         event_mock.message_id = 1
@@ -755,6 +977,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         event_mock.message.raw_text = "Deleted message from: Henrique"
         event_mock.message.message = "Deleted message from: Henrique"
         event_mock.message.text = "**Deleted message** from: Henrique"
+        event_mock.message.media = None
 
         with (
             patch(
@@ -808,6 +1031,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         mock_message = MagicMock()
         mock_message.id = 1
         mock_message.text = ""
+        mock_message.media = None
 
         event_mock = AsyncMock()
         event_mock.message_id = 1
@@ -816,6 +1040,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         event_mock.message.raw_text = None
         event_mock.message.message = None
         event_mock.message.text = None
+        event_mock.message.media = None
 
         with (
             patch(
@@ -878,6 +1103,7 @@ class GetOnMessageEditedTests(unittest.IsolatedAsyncioTestCase):
         event_mock.message.raw_text = "new text"
         event_mock.message.message = "new text"
         event_mock.message.text = "new text"
+        event_mock.message.media = None
         event_mock.original_update = telethon.types.UpdateMessageReactions(
             peer=telethon.types.PeerUser(user_id=1),
             msg_id=1,
@@ -1025,13 +1251,46 @@ class GetMessageMediaBlobThresholdTests(unittest.IsolatedAsyncioTestCase):
 
     @patch("packages.event_orchestration.file_size_threshold", 0)
     async def test_downloads_when_no_threshold(self):
-        message_mock = AsyncMock()
+        message_mock = MagicMock()
         message_mock.media = True
         message_mock.file = MagicMock()
         message_mock.file.size = 2000
-        message_mock.download_media = AsyncMock(return_value=b"data")
+        async def fake_download_media(*, file):
+            file.write(b"data")
+            return file
+        message_mock.download_media = AsyncMock(side_effect=fake_download_media)
         result = await get_message_media_blob(message_mock)
         self.assertEqual(result, b"data")
+
+    @patch("packages.event_orchestration.file_size_threshold", 1000)
+    async def test_downloads_when_file_size_is_unknown(self):
+        message_mock = MagicMock()
+        message_mock.media = True
+        message_mock.file = MagicMock()
+        message_mock.file.size = None
+        message_mock.download_media = AsyncMock(return_value=b"data")
+
+        result = await get_message_media_blob(message_mock)
+
+        self.assertIsNone(result)
+        message_mock.download_media.assert_not_called()
+
+    @patch("packages.event_orchestration.file_size_threshold", 1000)
+    async def test_returns_none_when_actual_download_exceeds_threshold(self):
+        message_mock = MagicMock()
+        message_mock.media = True
+        message_mock.file = MagicMock()
+        message_mock.file.size = 100
+
+        async def fake_download_media(*, file):
+            file.write(b"x" * 1001)
+            return file
+
+        message_mock.download_media = AsyncMock(side_effect=fake_download_media)
+
+        result = await get_message_media_blob(message_mock)
+
+        self.assertIsNone(result)
 
 
 class GetStoreMessageBranchTests(unittest.IsolatedAsyncioTestCase):
@@ -1065,8 +1324,11 @@ class GetStoreMessageBranchTests(unittest.IsolatedAsyncioTestCase):
         message_mock.message = "test"
         message_mock.from_id = None
         message_mock.peer_id = MagicMock()
-        message_mock.media = None
-        message_mock.date = None
+        message_mock.media = MagicMock(name="media-marker")
+        message_mock.date = datetime(2026, 4, 12, 12, 0, tzinfo=timezone.utc)
+        message_mock.file = MagicMock()
+        message_mock.file.name = "report.pdf"
+        message_mock.file.mime_type = "application/pdf"
 
         user_mock = MagicMock()
         user_mock.id = 123
@@ -1078,15 +1340,22 @@ class GetStoreMessageBranchTests(unittest.IsolatedAsyncioTestCase):
                 new_callable=AsyncMock,
             ) as build_peer,
             patch(
-                "packages.event_orchestration.get_message_media_blob",
+                "packages.event_orchestration.get_message_media_blob_result",
                 new_callable=AsyncMock,
-            ) as get_blob,
+            ) as get_blob_result,
         ):
             build_peer.return_value = None
-            get_blob.return_value = None
+            get_blob_result.return_value = SimpleNamespace(
+                blob=b"blob-data",
+                allow_previous_media_reuse=True,
+            )
             result = await store_fn(message_mock)
             self.assertTrue(result)
             session_mock.merge.assert_called_once()
+            merged_message = session_mock.merge.call_args.args[0]
+            self.assertEqual(merged_message.media, b"blob-data")
+            self.assertEqual(merged_message.media_file_name, "report.pdf")
+            self.assertEqual(merged_message.media_mime_type, "application/pdf")
 
     @patch.dict(
         "os.environ",
@@ -1130,15 +1399,440 @@ class GetStoreMessageBranchTests(unittest.IsolatedAsyncioTestCase):
                 new_callable=AsyncMock,
             ) as build_peer,
             patch(
-                "packages.event_orchestration.get_message_media_blob",
+                "packages.event_orchestration.get_message_media_blob_result",
                 new_callable=AsyncMock,
-            ) as get_blob,
+            ) as get_blob_result,
         ):
             build_peer.side_effect = [None, built_chat_peer]
-            get_blob.return_value = None
+            get_blob_result.return_value = SimpleNamespace(
+                blob=None,
+                allow_previous_media_reuse=True,
+            )
             result = await store_fn(message_mock)
             self.assertTrue(result)
             session_mock.merge.assert_called_once()
+
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+        },
+    )
+    async def test_stores_grouped_id_and_audio_document_attributes(self):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        store_fn = get_store_message(session_maker_mock, client_mock)
+
+        message_mock = AsyncMock()
+        message_mock.id = 1
+        message_mock.grouped_id = 777
+        message_mock.message = "voice note"
+        message_mock.from_id = None
+        message_mock.peer_id = MagicMock()
+        message_mock.media = MagicMock(name="media-marker")
+        message_mock.date = datetime(2026, 4, 12, 12, 30, tzinfo=timezone.utc)
+        message_mock.file = MagicMock()
+        message_mock.file.name = "voice.ogg"
+        message_mock.file.mime_type = "audio/ogg"
+        message_mock.document = MagicMock()
+        message_mock.document.attributes = [
+            telethon.types.DocumentAttributeAudio(
+                duration=12,
+                voice=True,
+                title="Voice",
+                performer="Henrique",
+                waveform=b"\x00\x01",
+            )
+        ]
+
+        user_mock = MagicMock()
+        user_mock.id = 123
+        message_mock.get_chat = AsyncMock(return_value=user_mock)
+
+        with (
+            patch(
+                "packages.event_orchestration.build_telegram_peer",
+                new_callable=AsyncMock,
+            ) as build_peer,
+            patch(
+                "packages.event_orchestration.get_message_media_blob_result",
+                new_callable=AsyncMock,
+            ) as get_blob_result,
+        ):
+            build_peer.return_value = None
+            get_blob_result.return_value = SimpleNamespace(
+                blob=b"voice-bytes",
+                allow_previous_media_reuse=True,
+            )
+            result = await store_fn(message_mock)
+
+        self.assertTrue(result)
+        merged_message = session_mock.merge.call_args.args[0]
+        self.assertEqual(merged_message.grouped_id, 777)
+        self.assertEqual(merged_message.media, b"voice-bytes")
+        self.assertEqual(merged_message.media_file_name, "voice.ogg")
+        self.assertEqual(merged_message.media_mime_type, "audio/ogg")
+        self.assertIn('"type":"audio"', merged_message.media_document_attributes)
+
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+        },
+    )
+    async def test_preserves_previous_media_when_edit_version_lacks_blob_and_metadata(
+        self,
+    ):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+        built_chat_peer = MagicMock()
+        built_chat_peer.id = 987
+
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        previous_message = MagicMock()
+        previous_message.media = b"old-blob"
+        previous_message.media_file_name = "photo.jpg"
+        previous_message.media_mime_type = "image/jpeg"
+        session_mock.execute.return_value.scalar.return_value = previous_message
+
+        store_fn = get_store_message(session_maker_mock, client_mock)
+
+        message_mock = AsyncMock()
+        message_mock.id = 1
+        message_mock.message = "updated caption"
+        message_mock.from_id = None
+        message_mock.peer_id = MagicMock(name="telethon_peer")
+        message_mock.media = MagicMock(name="media-marker")
+        message_mock.date = datetime(2026, 4, 12, 13, 0, tzinfo=timezone.utc)
+        message_mock.file = MagicMock()
+        message_mock.file.name = None
+        message_mock.file.mime_type = None
+
+        user_mock = MagicMock()
+        user_mock.id = 123
+        message_mock.get_chat = AsyncMock(return_value=user_mock)
+
+        with (
+            patch(
+                "packages.event_orchestration.build_telegram_peer",
+                new_callable=AsyncMock,
+            ) as build_peer,
+            patch(
+                "packages.event_orchestration.get_message_media_blob_result",
+                new_callable=AsyncMock,
+            ) as get_blob_result,
+        ):
+            build_peer.side_effect = [None, built_chat_peer]
+            get_blob_result.return_value = SimpleNamespace(
+                blob=None,
+                allow_previous_media_reuse=True,
+            )
+            result = await store_fn(message_mock)
+
+        self.assertTrue(result)
+        merged_message = session_mock.merge.call_args.args[0]
+        self.assertEqual(merged_message.media, b"old-blob")
+        self.assertEqual(merged_message.media_file_name, "photo.jpg")
+        self.assertEqual(merged_message.media_mime_type, "image/jpeg")
+
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+        },
+    )
+    async def test_reuses_previous_metadata_when_download_fails_but_new_labels_exist(
+        self,
+    ):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+        built_chat_peer = MagicMock()
+        built_chat_peer.id = 987
+
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        previous_message = MagicMock()
+        previous_message.media = b"old-blob"
+        previous_message.media_file_name = "photo.jpg"
+        previous_message.media_mime_type = "image/jpeg"
+        session_mock.execute.return_value.scalar.return_value = previous_message
+
+        store_fn = get_store_message(session_maker_mock, client_mock)
+
+        message_mock = AsyncMock()
+        message_mock.id = 1
+        message_mock.message = "updated caption"
+        message_mock.from_id = None
+        message_mock.peer_id = MagicMock(name="telethon_peer")
+        message_mock.media = MagicMock(name="media-marker")
+        message_mock.date = datetime(2026, 4, 12, 13, 15, tzinfo=timezone.utc)
+        message_mock.file = MagicMock()
+        message_mock.file.name = "replacement.png"
+        message_mock.file.mime_type = "image/png"
+
+        user_mock = MagicMock()
+        user_mock.id = 123
+        message_mock.get_chat = AsyncMock(return_value=user_mock)
+
+        with (
+            patch(
+                "packages.event_orchestration.build_telegram_peer",
+                new_callable=AsyncMock,
+            ) as build_peer,
+            patch(
+                "packages.event_orchestration.get_message_media_blob_result",
+                new_callable=AsyncMock,
+            ) as get_blob_result,
+        ):
+            build_peer.side_effect = [None, built_chat_peer]
+            get_blob_result.return_value = SimpleNamespace(
+                blob=None,
+                allow_previous_media_reuse=True,
+            )
+            result = await store_fn(message_mock)
+
+        self.assertTrue(result)
+        merged_message = session_mock.merge.call_args.args[0]
+        self.assertEqual(merged_message.media, b"old-blob")
+        self.assertEqual(merged_message.media_file_name, "photo.jpg")
+        self.assertEqual(merged_message.media_mime_type, "image/jpeg")
+
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+        },
+    )
+    async def test_preserves_previous_metadata_when_new_blob_lacks_metadata(self):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+        built_chat_peer = MagicMock()
+        built_chat_peer.id = 987
+
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        previous_message = MagicMock()
+        previous_message.media = b"old-blob"
+        previous_message.media_file_name = "photo.jpg"
+        previous_message.media_mime_type = "image/jpeg"
+        session_mock.execute.return_value.scalar.return_value = previous_message
+
+        store_fn = get_store_message(session_maker_mock, client_mock)
+
+        message_mock = AsyncMock()
+        message_mock.id = 1
+        message_mock.message = "updated caption"
+        message_mock.from_id = None
+        message_mock.peer_id = MagicMock(name="telethon_peer")
+        message_mock.media = MagicMock(name="media-marker")
+        message_mock.date = datetime(2026, 4, 12, 13, 30, tzinfo=timezone.utc)
+        message_mock.file = MagicMock()
+        message_mock.file.name = None
+        message_mock.file.mime_type = None
+
+        user_mock = MagicMock()
+        user_mock.id = 123
+        message_mock.get_chat = AsyncMock(return_value=user_mock)
+
+        with (
+            patch(
+                "packages.event_orchestration.build_telegram_peer",
+                new_callable=AsyncMock,
+            ) as build_peer,
+            patch(
+                "packages.event_orchestration.get_message_media_blob_result",
+                new_callable=AsyncMock,
+            ) as get_blob_result,
+        ):
+            build_peer.side_effect = [None, built_chat_peer]
+            get_blob_result.return_value = SimpleNamespace(
+                blob=b"new-blob",
+                allow_previous_media_reuse=True,
+            )
+            result = await store_fn(message_mock)
+
+        self.assertTrue(result)
+        merged_message = session_mock.merge.call_args.args[0]
+        self.assertEqual(merged_message.media, b"new-blob")
+        self.assertEqual(merged_message.media_file_name, "photo.jpg")
+        self.assertEqual(merged_message.media_mime_type, "image/jpeg")
+
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+        },
+    )
+    async def test_clears_previous_media_when_download_is_aborted_for_oversize(self):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+        built_chat_peer = MagicMock()
+        built_chat_peer.id = 987
+
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        previous_message = MagicMock()
+        previous_message.media = b"old-blob"
+        previous_message.media_file_name = "video.mp4"
+        previous_message.media_mime_type = "video/mp4"
+        previous_message.media_document_attributes = '[{"type":"video"}]'
+        session_mock.execute.return_value.scalar.return_value = previous_message
+
+        store_fn = get_store_message(session_maker_mock, client_mock)
+
+        message_mock = AsyncMock()
+        message_mock.id = 1
+        message_mock.message = "keep the text"
+        message_mock.from_id = None
+        message_mock.peer_id = MagicMock(name="telethon_peer")
+        message_mock.media = MagicMock(name="media-marker")
+        message_mock.date = datetime(2026, 4, 12, 13, 40, tzinfo=timezone.utc)
+        message_mock.file = MagicMock()
+        message_mock.file.name = "replacement.mp4"
+        message_mock.file.mime_type = "video/mp4"
+
+        user_mock = MagicMock()
+        user_mock.id = 123
+        message_mock.get_chat = AsyncMock(return_value=user_mock)
+
+        with (
+            patch(
+                "packages.event_orchestration.build_telegram_peer",
+                new_callable=AsyncMock,
+            ) as build_peer,
+            patch(
+                "packages.event_orchestration.get_message_media_blob_result",
+                new_callable=AsyncMock,
+            ) as get_blob_result,
+        ):
+            build_peer.side_effect = [None, built_chat_peer]
+            get_blob_result.return_value = SimpleNamespace(
+                blob=None,
+                allow_previous_media_reuse=False,
+            )
+            result = await store_fn(message_mock)
+
+        self.assertTrue(result)
+        merged_message = session_mock.merge.call_args.args[0]
+        self.assertEqual(merged_message.text, "keep the text")
+        self.assertIsNone(merged_message.media)
+        self.assertIsNone(merged_message.media_file_name)
+        self.assertIsNone(merged_message.media_mime_type)
+        self.assertIsNone(merged_message.media_document_attributes)
+
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+        },
+    )
+    async def test_does_not_reuse_previous_blob_for_webpage_media(self):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+        built_chat_peer = MagicMock()
+        built_chat_peer.id = 987
+
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        previous_message = MagicMock()
+        previous_message.media = b"old-blob"
+        previous_message.media_file_name = "photo.jpg"
+        previous_message.media_mime_type = "image/jpeg"
+        previous_message.media_document_attributes = '{"type":"video"}'
+        session_mock.execute.return_value.scalar.return_value = previous_message
+
+        store_fn = get_store_message(session_maker_mock, client_mock)
+
+        message_mock = AsyncMock()
+        message_mock.id = 1
+        message_mock.message = "web link"
+        message_mock.from_id = None
+        message_mock.peer_id = MagicMock(name="telethon_peer")
+        message_mock.media = telethon.types.MessageMediaWebPage(webpage=MagicMock())
+        message_mock.date = datetime(2026, 4, 12, 13, 45, tzinfo=timezone.utc)
+        message_mock.file = MagicMock()
+        message_mock.file.name = "preview.mp4"
+        message_mock.file.mime_type = "video/mp4"
+
+        user_mock = MagicMock()
+        user_mock.id = 123
+        message_mock.get_chat = AsyncMock(return_value=user_mock)
+
+        with (
+            patch(
+                "packages.event_orchestration.build_telegram_peer",
+                new_callable=AsyncMock,
+            ) as build_peer,
+            patch(
+                "packages.event_orchestration.get_message_media_blob_result",
+                new_callable=AsyncMock,
+            ) as get_blob_result,
+        ):
+            build_peer.side_effect = [None, built_chat_peer]
+            get_blob_result.return_value = SimpleNamespace(
+                blob=None,
+                allow_previous_media_reuse=False,
+            )
+            result = await store_fn(message_mock)
+
+        self.assertTrue(result)
+        merged_message = session_mock.merge.call_args.args[0]
+        self.assertIsNone(merged_message.media)
+        self.assertIsNone(merged_message.media_file_name)
+        self.assertIsNone(merged_message.media_mime_type)
+        self.assertIsNone(merged_message.media_document_attributes)
 
 
 class GetStoreMessageIfNotExistsTests(unittest.IsolatedAsyncioTestCase):
@@ -1176,12 +1870,11 @@ class GetStoreMessageIfNotExistsTests(unittest.IsolatedAsyncioTestCase):
         user_mock.id = 123
         message_mock.get_chat = AsyncMock(return_value=user_mock)
 
-        existing_msg = MagicMock()
         with patch(
-            "packages.event_orchestration.load_messages_from_db",
+            "packages.event_orchestration.message_exists_in_db",
             new_callable=AsyncMock,
-        ) as load_mock:
-            load_mock.return_value = (MagicMock(), [existing_msg], [])
+        ) as message_exists_mock:
+            message_exists_mock.return_value = True
             result = await store_fn(message_mock)
             self.assertFalse(result)
 

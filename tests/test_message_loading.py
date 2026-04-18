@@ -5,6 +5,7 @@ from packages.message_loading import (
     filter_loaded_messages,
     load_messages_by_parameters,
     load_messages_from_db,
+    message_exists_in_db,
 )
 
 
@@ -134,6 +135,35 @@ class LoadMessagesFromDbPeerFilteringTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(results), 1)
         self.assertEqual(unloaded, [2])
+
+
+class MessageExistsInDbTests(unittest.IsolatedAsyncioTestCase):
+    async def test_returns_true_when_message_exists(self):
+        session_mock = MagicMock()
+        session_mock.execute.return_value.first.return_value = (1,)
+
+        result = await message_exists_in_db(1, None, session_mock)
+
+        self.assertTrue(result)
+
+    async def test_returns_false_when_message_missing(self):
+        session_mock = MagicMock()
+        session_mock.execute.return_value.first.return_value = None
+
+        result = await message_exists_in_db(1, None, session_mock)
+
+        self.assertFalse(result)
+
+    async def test_queries_only_message_identifier_for_existence(self):
+        session_mock = MagicMock()
+        session_mock.execute.return_value.first.return_value = None
+
+        await message_exists_in_db(1, None, session_mock)
+
+        query = session_mock.execute.call_args.args[0]
+        compiled_query = str(query)
+        self.assertIn("telegram_messages.id", compiled_query)
+        self.assertNotIn("telegram_messages.media", compiled_query)
 
 
 class LoadMessagesByParametersFullFlowTests(unittest.IsolatedAsyncioTestCase):

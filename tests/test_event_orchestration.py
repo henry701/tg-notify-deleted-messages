@@ -1236,11 +1236,14 @@ class GetMessageMediaBlobThresholdTests(unittest.IsolatedAsyncioTestCase):
 
     @patch("packages.event_orchestration.file_size_threshold", 0)
     async def test_downloads_when_no_threshold(self):
-        message_mock = AsyncMock()
+        message_mock = MagicMock()
         message_mock.media = True
         message_mock.file = MagicMock()
         message_mock.file.size = 2000
-        message_mock.download_media = AsyncMock(return_value=b"data")
+        async def fake_download_media(*, file):
+            file.write(b"data")
+            return file
+        message_mock.download_media = AsyncMock(side_effect=fake_download_media)
         result = await get_message_media_blob(message_mock)
         self.assertEqual(result, b"data")
 
@@ -1256,6 +1259,23 @@ class GetMessageMediaBlobThresholdTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
         message_mock.download_media.assert_not_called()
+
+    @patch("packages.event_orchestration.file_size_threshold", 1000)
+    async def test_returns_none_when_actual_download_exceeds_threshold(self):
+        message_mock = MagicMock()
+        message_mock.media = True
+        message_mock.file = MagicMock()
+        message_mock.file.size = 100
+
+        async def fake_download_media(*, file):
+            file.write(b"x" * 1001)
+            return file
+
+        message_mock.download_media = AsyncMock(side_effect=fake_download_media)
+
+        result = await get_message_media_blob(message_mock)
+
+        self.assertIsNone(result)
 
 
 class GetStoreMessageBranchTests(unittest.IsolatedAsyncioTestCase):

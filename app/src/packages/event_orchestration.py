@@ -4,6 +4,7 @@ import asyncio
 import copy
 import logging
 import os
+import tempfile
 from collections.abc import Awaitable, Callable
 from distutils.util import strtobool
 from typing import Any
@@ -44,6 +45,60 @@ DEFAULT_MEDIA_FILE_SIZE_THRESHOLD = 50_000_000
 file_size_threshold = int(
     os.getenv("MEDIA_FILE_SIZE_THRESHOLD", str(DEFAULT_MEDIA_FILE_SIZE_THRESHOLD))
 )
+SPOOLED_MEDIA_BUFFER_MAX_MEMORY_BYTES = 1_000_000
+
+
+class MediaDownloadThresholdExceededError(Exception):
+    def __init__(self, attempted_bytes: int, byte_limit: int):
+        super().__init__(
+            f"Download exceeded MEDIA_FILE_SIZE_THRESHOLD={byte_limit} with attempted_bytes={attempted_bytes}"
+        )
+        self.attempted_bytes = attempted_bytes
+        self.byte_limit = byte_limit
+
+
+class LimitedMediaBuffer:
+    def __init__(self, byte_limit: int | None):
+        self.byte_limit = byte_limit
+        self.bytes_written = 0
+        self._inner = tempfile.SpooledTemporaryFile(
+            max_size=SPOOLED_MEDIA_BUFFER_MAX_MEMORY_BYTES,
+            mode="w+b",
+        )
+
+    def write(self, chunk: bytes):
+        attempted_bytes = self.bytes_written + len(chunk)
+        if self.byte_limit is not None and attempted_bytes > self.byte_limit:
+            raise MediaDownloadThresholdExceededError(
+                attempted_bytes=attempted_bytes,
+                byte_limit=self.byte_limit,
+            )
+        written = self._inner.write(chunk)
+        written_bytes = len(chunk) if written is None else int(written)
+        self.bytes_written = self.bytes_written + written_bytes
+        return written
+
+    def tell(self):
+        return self._inner.tell()
+
+    def flush(self):
+        return self._inner.flush()
+
+    def seek(self, *args):
+        return self._inner.seek(*args)
+
+    def read(self, *args):
+        return self._inner.read(*args)
+
+    def close(self):
+        return self._inner.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
 
 
 def group_deleted_messages_for_notification(
@@ -529,7 +584,22 @@ async def get_message_media_blob(message: telethon.tl.custom.message.Message):
             message_file_size,
             format_process_runtime_snapshot(),
         )
-        downloaded_blob = await message.download_media(file=bytes)
+        with LimitedMediaBuffer(
+            file_size_threshold if file_size_threshold > 0 else None
+        ) as limited_media_buffer:
+            try:
+                await message.download_media(file=limited_media_buffer)
+            except MediaDownloadThresholdExceededError as e:
+                logger.warning(
+                    "Aborting file download because actual bytes exceeded MEDIA_FILE_SIZE_THRESHOLD. reported_file_size=%s attempted_bytes=%s threshold=%s | %s",
+                    message_file_size,
+                    e.attempted_bytes,
+                    e.byte_limit,
+                    format_process_runtime_snapshot(),
+                )
+                return None
+            limited_media_buffer.seek(0)
+            downloaded_blob = limited_media_buffer.read()
         logger.info(
             "Finished downloading file with %s bytes size. Blob length=%s | %s",
             message_file_size,

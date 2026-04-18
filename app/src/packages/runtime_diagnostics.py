@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
+from distutils.util import strtobool
 from pathlib import Path
 
 PROCESS_STATUS_PATH = Path("/proc/self/status")
 PROCESS_FD_PATH = Path("/proc/self/fd")
+
+
+def runtime_diagnostics_enabled() -> bool:
+    return bool(strtobool(os.getenv("LOG_RUNTIME_DIAGNOSTICS", "0")))
 
 
 def _extract_status_kb_value(status_text: str, field_name: str) -> int | None:
@@ -85,3 +91,22 @@ def format_process_runtime_snapshot(
         open_fds=snapshot.get("open_fds", "unknown"),
         asyncio_tasks=snapshot.get("asyncio_tasks", "unknown"),
     )
+
+
+def log_with_runtime_snapshot(
+    logger: logging.Logger,
+    level: int,
+    message: str,
+    *args,
+    **kwargs,
+):
+    if runtime_diagnostics_enabled():
+        logger.log(
+            level,
+            message + " | %s",
+            *args,
+            format_process_runtime_snapshot(),
+            **kwargs,
+        )
+        return
+    logger.log(level, message, *args, **kwargs)

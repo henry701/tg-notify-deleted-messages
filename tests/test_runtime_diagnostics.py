@@ -1,8 +1,9 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from packages.runtime_diagnostics import (
     format_process_runtime_snapshot,
+    log_with_runtime_snapshot,
     read_process_runtime_snapshot,
 )
 
@@ -53,3 +54,25 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
             formatted,
             "rss_kb=1234 swap_kb=5678 vm_size_kb=9012 threads=17 open_fds=2 asyncio_tasks=3",
         )
+
+    @patch.dict("os.environ", {"LOG_RUNTIME_DIAGNOSTICS": "0"})
+    def test_log_with_runtime_snapshot_is_noop_when_disabled(self):
+        logger = MagicMock()
+
+        log_with_runtime_snapshot(logger, 20, "hello %s", "world")
+
+        logger.log.assert_called_once_with(20, "hello %s", "world")
+
+    @patch.dict("os.environ", {"LOG_RUNTIME_DIAGNOSTICS": "1"})
+    @patch(
+        "packages.runtime_diagnostics.format_process_runtime_snapshot",
+        return_value="rss_kb=1",
+    )
+    def test_log_with_runtime_snapshot_appends_suffix_when_enabled(
+        self, _mock_snapshot
+    ):
+        logger = MagicMock()
+
+        log_with_runtime_snapshot(logger, 20, "hello %s", "world")
+
+        logger.log.assert_called_once_with(20, "hello %s | %s", "world", "rss_kb=1")

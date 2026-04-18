@@ -26,7 +26,7 @@ from packages.preload_checkpoints import (
     list_preload_checkpoints,
     upsert_preload_checkpoint,
 )
-from packages.runtime_diagnostics import format_process_runtime_snapshot
+from packages.runtime_diagnostics import log_with_runtime_snapshot
 
 logger = logging.getLogger("tgdel-http")
 
@@ -396,5 +396,5 @@ def add_informative_routes(
         return flask.Response(status=204)
 
     def log_and_return_500(message: str):
-        logger.error("%s | %s", message, format_process_runtime_snapshot(), exc_info=True)
+        log_with_runtime_snapshot(logger, logging.ERROR, "%s", message, exc_info=True)
         return flask.Response(message, status=500)

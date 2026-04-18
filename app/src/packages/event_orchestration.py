@@ -27,7 +27,7 @@ from packages.message_loading import (
 )
 from packages.models.root.TelegramMessage import TelegramMessage
 from packages.restart_manager import update_last_activity
-from packages.runtime_diagnostics import format_process_runtime_snapshot
+from packages.runtime_diagnostics import log_with_runtime_snapshot
 from packages.telegram_helpers import (
     build_telegram_peer,
     get_canonical_message_text,
@@ -187,13 +187,14 @@ async def load_messages_from_deleted_event(
         member_ignore_threshold,
         should_notify_outgoing_messages,
     )
-    logger.debug(
-        "Deleted message DB load returned messages=%s unloaded_ids=%s filtered_away_ids=%s deleted_ids=%s | %s",
+    log_with_runtime_snapshot(
+        logger,
+        logging.DEBUG,
+        "Deleted message DB load returned messages=%s unloaded_ids=%s filtered_away_ids=%s deleted_ids=%s",
         len(loaded_messages[0]),
         loaded_messages[2],
         loaded_messages[3],
         event.deleted_ids,
-        format_process_runtime_snapshot(),
     )
     return loaded_messages
 
@@ -396,13 +397,14 @@ def get_on_message_edited(
                     member_ignore_threshold,
                     should_notify_outgoing_messages,
                 )
-            logger.debug(
-                "Edited message load returned messages=%s unloaded_ids=%s filtered_away_ids=%s message_id=%s | %s",
+            log_with_runtime_snapshot(
+                logger,
+                logging.DEBUG,
+                "Edited message load returned messages=%s unloaded_ids=%s filtered_away_ids=%s message_id=%s",
                 len(messages),
                 unloaded_ids,
                 filtered_away_ids,
                 message_id,
-                format_process_runtime_snapshot(),
             )
 
             edited_messages_count_str = str(edited_messages_count)
@@ -547,10 +549,11 @@ def get_should_ignore_message_chat(client: TelegramClient):
 @retry(retry=retry_if_exception_type(IOError), stop=stop_after_attempt(3))
 async def get_message_media_blob(message: telethon.tl.custom.message.Message):
     if message is not None and not should_persist_message_media(message):
-        logger.info(
-            "Skipping media persistence for non-persistable media type=%s | %s",
+        log_with_runtime_snapshot(
+            logger,
+            logging.INFO,
+            "Skipping media persistence for non-persistable media type=%s",
             type(getattr(message, "media", None)).__name__,
-            format_process_runtime_snapshot(),
         )
         return None
     message_file = getattr(message, "file", None) if message is not None else None
@@ -574,23 +577,26 @@ async def get_message_media_blob(message: telethon.tl.custom.message.Message):
             and message_file_size is not None
             and message_file_size > file_size_threshold
         ):
-            logger.info(
-                "Skipping file download with %s bytes size because it exceeds MEDIA_FILE_SIZE_THRESHOLD=%s | %s",
+            log_with_runtime_snapshot(
+                logger,
+                logging.INFO,
+                "Skipping file download with %s bytes size because it exceeds MEDIA_FILE_SIZE_THRESHOLD=%s",
                 message_file_size,
                 file_size_threshold,
-                format_process_runtime_snapshot(),
             )
         elif message and message.media and message_file and message_file_size is None:
-            logger.info(
-                "Skipping file download because Telegram did not provide a file size | %s",
-                format_process_runtime_snapshot(),
+            log_with_runtime_snapshot(
+                logger,
+                logging.INFO,
+                "Skipping file download because Telegram did not provide a file size",
             )
         return None
     async with download_semaphore:
-        logger.info(
-            "Downloading file with %s bytes size | %s",
+        log_with_runtime_snapshot(
+            logger,
+            logging.INFO,
+            "Downloading file with %s bytes size",
             message_file_size,
-            format_process_runtime_snapshot(),
         )
         with LimitedMediaBuffer(
             file_size_threshold if file_size_threshold > 0 else None
@@ -598,21 +604,23 @@ async def get_message_media_blob(message: telethon.tl.custom.message.Message):
             try:
                 await message.download_media(file=limited_media_buffer)
             except MediaDownloadThresholdExceededError as e:
-                logger.warning(
-                    "Aborting file download because actual bytes exceeded MEDIA_FILE_SIZE_THRESHOLD. reported_file_size=%s attempted_bytes=%s threshold=%s | %s",
+                log_with_runtime_snapshot(
+                    logger,
+                    logging.WARNING,
+                    "Aborting file download because actual bytes exceeded MEDIA_FILE_SIZE_THRESHOLD. reported_file_size=%s attempted_bytes=%s threshold=%s",
                     message_file_size,
                     e.attempted_bytes,
                     e.byte_limit,
-                    format_process_runtime_snapshot(),
                 )
                 return None
             limited_media_buffer.seek(0)
             downloaded_blob = limited_media_buffer.read()
-        logger.info(
-            "Finished downloading file with %s bytes size. Blob length=%s | %s",
+        log_with_runtime_snapshot(
+            logger,
+            logging.INFO,
+            "Finished downloading file with %s bytes size. Blob length=%s",
             message_file_size,
             len(downloaded_blob) if downloaded_blob is not None else None,
-            format_process_runtime_snapshot(),
         )
         return downloaded_blob
 
@@ -727,22 +735,24 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
                 edit_date=edit_date,
             )
             if getattr(message, "media", None) is not None:
-                logger.info(
-                    "Persisting message media for message_id=%s chat_peer_id=%s blob_length=%s reused_previous_media=%s grouped_id=%s | %s",
+                log_with_runtime_snapshot(
+                    logger,
+                    logging.INFO,
+                    "Persisting message media for message_id=%s chat_peer_id=%s blob_length=%s reused_previous_media=%s grouped_id=%s",
                     message.id,
                     int(built_chat_peer.id) if built_chat_peer is not None else None,
                     len(inherited_blob) if inherited_blob is not None else None,
                     reusing_previous_media_blob,
                     inherited_grouped_id,
-                    format_process_runtime_snapshot(),
                 )
             sqlalchemy_session.merge(orm_message)
             if getattr(message, "media", None) is not None:
-                logger.info(
-                    "Stored message media for message_id=%s chat_peer_id=%s | %s",
+                log_with_runtime_snapshot(
+                    logger,
+                    logging.INFO,
+                    "Stored message media for message_id=%s chat_peer_id=%s",
                     message.id,
                     int(built_chat_peer.id) if built_chat_peer is not None else None,
-                    format_process_runtime_snapshot(),
                 )
             return True
 
@@ -763,19 +773,21 @@ def get_store_message_if_not_exists(
         message: telethon.tl.custom.message.Message, check_chat: bool = True
     ):
         if await should_ignore_message(message, check_chat):
-            logger.debug(
-                "Skipping store_message_if_not_exists because message is ignored: message_id=%s check_chat=%s | %s",
+            log_with_runtime_snapshot(
+                logger,
+                logging.DEBUG,
+                "Skipping store_message_if_not_exists because message is ignored: message_id=%s check_chat=%s",
                 getattr(message, "id", None),
                 check_chat,
-                format_process_runtime_snapshot(),
             )
             return False
         peer_entity = await message.get_chat()
-        logger.debug(
-            "Running duplicate check before storing message_id=%s %s | %s",
+        log_with_runtime_snapshot(
+            logger,
+            logging.DEBUG,
+            "Running duplicate check before storing message_id=%s %s",
             getattr(message, "id", None),
             f"chat_id={getattr(peer_entity, 'id', None)}",
-            format_process_runtime_snapshot(),
         )
         with sqlalchemy_session_maker.begin() as sqlalchemy_session:
             message_exists = await message_exists_in_db(
@@ -784,18 +796,20 @@ def get_store_message_if_not_exists(
                 sqlalchemy_session,
             )
             if message_exists:
-                logger.debug(
-                    "Skipping store because message already exists: message_id=%s chat_id=%s | %s",
+                log_with_runtime_snapshot(
+                    logger,
+                    logging.DEBUG,
+                    "Skipping store because message already exists: message_id=%s chat_id=%s",
                     getattr(message, "id", None),
                     getattr(peer_entity, "id", None),
-                    format_process_runtime_snapshot(),
                 )
                 return False
-        logger.debug(
-            "Storing new message after duplicate check: message_id=%s chat_id=%s | %s",
+        log_with_runtime_snapshot(
+            logger,
+            logging.DEBUG,
+            "Storing new message after duplicate check: message_id=%s chat_id=%s",
             getattr(message, "id", None),
             getattr(peer_entity, "id", None),
-            format_process_runtime_snapshot(),
         )
         return await store_message(message)
 

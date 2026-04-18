@@ -119,7 +119,7 @@ async def load_messages_from_deleted_event(
     except ValueError:
         pass
 
-    return await load_messages_by_parameters(
+    loaded_messages = await load_messages_by_parameters(
         event.deleted_ids,
         chat,
         client,
@@ -131,6 +131,15 @@ async def load_messages_from_deleted_event(
         member_ignore_threshold,
         should_notify_outgoing_messages,
     )
+    logger.debug(
+        "Deleted message DB load returned messages=%s unloaded_ids=%s filtered_away_ids=%s deleted_ids=%s | %s",
+        len(loaded_messages[0]),
+        loaded_messages[2],
+        loaded_messages[3],
+        event.deleted_ids,
+        format_process_runtime_snapshot(),
+    )
+    return loaded_messages
 
 
 def get_on_message_deleted(
@@ -331,6 +340,14 @@ def get_on_message_edited(
                     member_ignore_threshold,
                     should_notify_outgoing_messages,
                 )
+            logger.debug(
+                "Edited message load returned messages=%s unloaded_ids=%s filtered_away_ids=%s message_id=%s | %s",
+                len(messages),
+                unloaded_ids,
+                filtered_away_ids,
+                message_id,
+                format_process_runtime_snapshot(),
+            )
 
             edited_messages_count_str = str(edited_messages_count)
             db_messages_count = len(messages)
@@ -661,8 +678,20 @@ def get_store_message_if_not_exists(
         message: telethon.tl.custom.message.Message, check_chat: bool = True
     ):
         if await should_ignore_message(message, check_chat):
+            logger.debug(
+                "Skipping store_message_if_not_exists because message is ignored: message_id=%s check_chat=%s | %s",
+                getattr(message, "id", None),
+                check_chat,
+                format_process_runtime_snapshot(),
+            )
             return False
         peer_entity = await message.get_chat()
+        logger.debug(
+            "Running duplicate check before storing message_id=%s %s | %s",
+            getattr(message, "id", None),
+            f"chat_id={getattr(peer_entity, 'id', None)}",
+            format_process_runtime_snapshot(),
+        )
         with sqlalchemy_session_maker.begin() as sqlalchemy_session:
             message_exists = await message_exists_in_db(
                 message.id,
@@ -670,7 +699,19 @@ def get_store_message_if_not_exists(
                 sqlalchemy_session,
             )
             if message_exists:
+                logger.debug(
+                    "Skipping store because message already exists: message_id=%s chat_id=%s | %s",
+                    getattr(message, "id", None),
+                    getattr(peer_entity, "id", None),
+                    format_process_runtime_snapshot(),
+                )
                 return False
+        logger.debug(
+            "Storing new message after duplicate check: message_id=%s chat_id=%s | %s",
+            getattr(message, "id", None),
+            getattr(peer_entity, "id", None),
+            format_process_runtime_snapshot(),
+        )
         return await store_message(message)
 
     return store_message_if_not_exists

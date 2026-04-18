@@ -1,5 +1,7 @@
 """Message loading utilities for fetching messages from the database."""
 
+import logging
+
 import telethon
 from sqlalchemy import func
 from sqlalchemy.orm.session import Session
@@ -13,6 +15,23 @@ from packages.filtering import (
 from packages.models.root.TelegramMessage import TelegramMessage
 from packages.models.root.TelegramPeer import TelegramPeer
 from packages.models.support.PeerType import PeerType
+from packages.runtime_diagnostics import format_process_runtime_snapshot
+
+logger = logging.getLogger("tgdel-message-loading")
+
+
+def describe_peer_entity(peer_entity) -> str:
+    if peer_entity is None:
+        return "peer=None"
+    peer_type = type(peer_entity).__name__
+    peer_id = getattr(peer_entity, "id", None)
+    return f"peer_type={peer_type} peer_id={peer_id}"
+
+
+def summarize_message_ids(ids: list[int], limit: int = 10) -> str:
+    if len(ids) <= limit:
+        return str(ids)
+    return f"{ids[:limit]}...(+{len(ids) - limit} more)"
 
 
 def apply_peer_filters_to_message_query(the_query, peer_entity):
@@ -26,6 +45,12 @@ def apply_peer_filters_to_message_query(the_query, peer_entity):
         the_query = the_query.where(
             TelegramMessage.chat_peer.has(TelegramPeer.type == chat_peer_type)
         )
+    logger.debug(
+        "Applied peer filters to message query: %s peer_type_filter=%s | %s",
+        describe_peer_entity(peer_entity),
+        chat_peer_type.name if chat_peer_type is not None else None,
+        format_process_runtime_snapshot(),
+    )
     return the_query
 
 
@@ -39,6 +64,13 @@ async def load_latest_messages_from_db(
 ) -> tuple:
     from sqlalchemy.sql.selectable import Select
 
+    logger.debug(
+        "Loading latest messages from DB for ids=%s count=%s %s | %s",
+        summarize_message_ids(ids),
+        len(ids),
+        describe_peer_entity(peer_entity),
+        format_process_runtime_snapshot(),
+    )
     subq = (
         select(
             TelegramMessage.id,
@@ -63,6 +95,15 @@ async def load_latest_messages_from_db(
     )
     loaded_ids = [int(str(message.id)) for message in db_results]
     unloaded_ids = [msg_id for msg_id in ids if msg_id not in loaded_ids]
+    logger.debug(
+        "Loaded latest messages from DB: loaded_count=%s unloaded_count=%s loaded_ids=%s unloaded_ids=%s %s | %s",
+        len(db_results),
+        len(unloaded_ids),
+        summarize_message_ids(loaded_ids),
+        summarize_message_ids(unloaded_ids),
+        describe_peer_entity(peer_entity),
+        format_process_runtime_snapshot(),
+    )
     return (the_query, db_results, unloaded_ids)
 
 
@@ -85,9 +126,23 @@ async def message_exists_in_db(
     | None,
     sqlalchemy_session: Session,
 ) -> bool:
+    logger.debug(
+        "Checking whether message exists in DB for message_id=%s %s | %s",
+        message_id,
+        describe_peer_entity(peer_entity),
+        format_process_runtime_snapshot(),
+    )
     the_query = select(TelegramMessage.id).where(TelegramMessage.id == message_id).limit(1)
     the_query = apply_peer_filters_to_message_query(the_query, peer_entity)
-    return sqlalchemy_session.execute(the_query).first() is not None
+    message_exists = sqlalchemy_session.execute(the_query).first() is not None
+    logger.debug(
+        "Finished message existence check for message_id=%s exists=%s %s | %s",
+        message_id,
+        message_exists,
+        describe_peer_entity(peer_entity),
+        format_process_runtime_snapshot(),
+    )
+    return message_exists
 
 
 async def load_messages_by_parameters(
@@ -135,6 +190,19 @@ async def load_messages_by_parameters(
     # If we know the chat where the event came from,
     # and it should be ignored, then don't even bother
     # querying the database.
+    logger.debug(
+        "Loading messages by parameters for ids=%s count=%s %s ignore_channels=%s ignore_groups=%s ignore_megagroups=%s ignore_gigagroups=%s member_ignore_threshold=%s should_load_outgoing_messages=%s | %s",
+        summarize_message_ids(ids),
+        len(ids),
+        describe_peer_entity(peer_entity),
+        ignore_channels,
+        ignore_groups,
+        ignore_megagroups,
+        ignore_gigagroups,
+        member_ignore_threshold,
+        should_load_outgoing_messages,
+        format_process_runtime_snapshot(),
+    )
     if peer_entity and await raw_should_ignore_message_chat(
         peer_entity,
         client,
@@ -144,6 +212,12 @@ async def load_messages_by_parameters(
         ignore_gigagroups,
         member_ignore_threshold,
     ):
+        logger.debug(
+            "Skipping DB message load because peer is filtered away: ids=%s %s | %s",
+            summarize_message_ids(ids),
+            describe_peer_entity(peer_entity),
+            format_process_runtime_snapshot(),
+        )
         return ([], None, [], ids)
 
     (the_query, db_results, unloaded_ids) = await load_messages_from_db(
@@ -167,6 +241,15 @@ async def load_messages_by_parameters(
         for message in db_results
         if message not in filtered_results
     ]
+    logger.debug(
+        "Completed load_messages_by_parameters: db_results=%s filtered_results=%s unloaded_ids=%s filtered_away_ids=%s %s | %s",
+        len(db_results),
+        len(filtered_results),
+        summarize_message_ids(unloaded_ids),
+        summarize_message_ids(filtered_away_ids),
+        describe_peer_entity(peer_entity),
+        format_process_runtime_snapshot(),
+    )
 
     return (filtered_results, the_query, unloaded_ids, filtered_away_ids)
 
@@ -200,7 +283,13 @@ async def filter_loaded_messages(
     Returns:
         List of messages that should trigger deletion notifications
     """
-    return [
+    logger.debug(
+        "Filtering loaded messages: candidate_count=%s should_notify_outgoing_messages=%s | %s",
+        len(db_results),
+        should_notify_outgoing_messages,
+        format_process_runtime_snapshot(),
+    )
+    filtered_results = [
         message
         for message in db_results
         if not await should_ignore_deleted_message(
@@ -214,3 +303,10 @@ async def filter_loaded_messages(
             should_notify_outgoing_messages,
         )
     ]
+    logger.debug(
+        "Finished filtering loaded messages: kept=%s filtered_away=%s | %s",
+        len(filtered_results),
+        len(db_results) - len(filtered_results),
+        format_process_runtime_snapshot(),
+    )
+    return filtered_results

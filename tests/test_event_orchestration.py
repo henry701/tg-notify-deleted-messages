@@ -140,6 +140,18 @@ class GetMessageMediaBlobTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
         message_mock.download_media.assert_not_called()
 
+    async def test_returns_none_for_webpage_media(self):
+        message_mock = MagicMock()
+        message_mock.media = telethon.types.MessageMediaWebPage(webpage=MagicMock())
+        message_mock.file = MagicMock()
+        message_mock.file.size = 192663
+        message_mock.download_media = AsyncMock(return_value=b"data")
+
+        result = await get_message_media_blob(message_mock)
+
+        self.assertIsNone(result)
+        message_mock.download_media.assert_not_called()
+
     async def test_returns_none_for_none_message(self):
         result = await get_message_media_blob(None)
         self.assertIsNone(result)
@@ -1309,7 +1321,7 @@ class GetStoreMessageBranchTests(unittest.IsolatedAsyncioTestCase):
         message_mock.message = "test"
         message_mock.from_id = None
         message_mock.peer_id = MagicMock()
-        message_mock.media = None
+        message_mock.media = MagicMock(name="media-marker")
         message_mock.date = datetime(2026, 4, 12, 12, 0, tzinfo=timezone.utc)
         message_mock.file = MagicMock()
         message_mock.file.name = "report.pdf"
@@ -1659,6 +1671,73 @@ class GetStoreMessageBranchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(merged_message.media, b"new-blob")
         self.assertEqual(merged_message.media_file_name, "photo.jpg")
         self.assertEqual(merged_message.media_mime_type, "image/jpeg")
+
+    @patch.dict(
+        "os.environ",
+        {
+            "IGNORE_CHANNELS": "0",
+            "IGNORE_GROUPS": "0",
+            "IGNORE_MEGAGROUPS": "0",
+            "IGNORE_GIGAGROUPS": "0",
+            "MEMBER_IGNORE_THRESHOLD": "0",
+        },
+    )
+    async def test_does_not_reuse_previous_blob_for_webpage_media(self):
+        client_mock = AsyncMock()
+        session_maker_mock = MagicMock()
+        built_chat_peer = MagicMock()
+        built_chat_peer.id = 987
+
+        session_mock = MagicMock()
+        session_maker_mock.begin.return_value.__enter__ = MagicMock(
+            return_value=session_mock
+        )
+        session_maker_mock.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+        previous_message = MagicMock()
+        previous_message.media = b"old-blob"
+        previous_message.media_file_name = "photo.jpg"
+        previous_message.media_mime_type = "image/jpeg"
+        previous_message.media_document_attributes = '{"type":"video"}'
+        session_mock.execute.return_value.scalar.return_value = previous_message
+
+        store_fn = get_store_message(session_maker_mock, client_mock)
+
+        message_mock = AsyncMock()
+        message_mock.id = 1
+        message_mock.message = "web link"
+        message_mock.from_id = None
+        message_mock.peer_id = MagicMock(name="telethon_peer")
+        message_mock.media = telethon.types.MessageMediaWebPage(webpage=MagicMock())
+        message_mock.date = datetime(2026, 4, 12, 13, 45, tzinfo=timezone.utc)
+        message_mock.file = MagicMock()
+        message_mock.file.name = "preview.mp4"
+        message_mock.file.mime_type = "video/mp4"
+
+        user_mock = MagicMock()
+        user_mock.id = 123
+        message_mock.get_chat = AsyncMock(return_value=user_mock)
+
+        with (
+            patch(
+                "packages.event_orchestration.build_telegram_peer",
+                new_callable=AsyncMock,
+            ) as build_peer,
+            patch(
+                "packages.event_orchestration.get_message_media_blob",
+                new_callable=AsyncMock,
+            ) as get_blob,
+        ):
+            build_peer.side_effect = [None, built_chat_peer]
+            get_blob.return_value = None
+            result = await store_fn(message_mock)
+
+        self.assertTrue(result)
+        merged_message = session_mock.merge.call_args.args[0]
+        self.assertIsNone(merged_message.media)
+        self.assertIsNone(merged_message.media_file_name)
+        self.assertIsNone(merged_message.media_mime_type)
+        self.assertIsNone(merged_message.media_document_attributes)
 
 
 class GetStoreMessageIfNotExistsTests(unittest.IsolatedAsyncioTestCase):

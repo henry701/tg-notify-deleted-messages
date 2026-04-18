@@ -33,6 +33,7 @@ from packages.telegram_helpers import (
     get_canonical_message_text,
     get_message_grouped_id,
     get_message_media_metadata,
+    should_persist_message_media,
     serialize_message_document_attributes,
 )
 
@@ -545,6 +546,13 @@ def get_should_ignore_message_chat(client: TelegramClient):
 
 @retry(retry=retry_if_exception_type(IOError), stop=stop_after_attempt(3))
 async def get_message_media_blob(message: telethon.tl.custom.message.Message):
+    if message is not None and not should_persist_message_media(message):
+        logger.info(
+            "Skipping media persistence for non-persistable media type=%s | %s",
+            type(getattr(message, "media", None)).__name__,
+            format_process_runtime_snapshot(),
+        )
+        return None
     message_file = getattr(message, "file", None) if message is not None else None
     message_file_size = getattr(message_file, "size", None)
     if (
@@ -640,6 +648,7 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
             message.peer_id, client, sqlalchemy_session_maker
         )
         grouped_id = get_message_grouped_id(message)
+        should_persist_media = should_persist_message_media(message)
         blob = await get_message_media_blob(message)
         media_file_name, media_mime_type = get_message_media_metadata(message)
         media_document_attributes = serialize_message_document_attributes(message)
@@ -648,7 +657,7 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
             previous_latest_message = None
             if (
                 built_chat_peer is not None
-                and (getattr(message, "media", None) is not None or grouped_id is None)
+                and (should_persist_media or grouped_id is None)
                 and getattr(message, "edit_date", None) is not None
             ):
                 previous_latest_message = load_previous_latest_message(
@@ -656,24 +665,30 @@ def get_store_message(sqlalchemy_session_maker: sessionmaker, client: TelegramCl
                 )
             elif (
                 built_chat_peer is not None
-                and getattr(message, "media", None) is not None
+                and should_persist_media
             ):
                 previous_latest_message = load_previous_latest_message(
                     sqlalchemy_session
                 )
 
             reusing_previous_media_blob = (
-                blob is None and previous_latest_message is not None
+                blob is None and previous_latest_message is not None and should_persist_media
             )
             inherited_blob = (
-                previous_latest_message.media if reusing_previous_media_blob else blob
+                previous_latest_message.media
+                if reusing_previous_media_blob
+                else (blob if should_persist_media else None)
             )
             inherited_grouped_id = (
                 previous_latest_message.grouped_id
                 if previous_latest_message is not None and grouped_id is None
                 else grouped_id
             )
-            if reusing_previous_media_blob:
+            if not should_persist_media:
+                inherited_media_file_name = None
+                inherited_media_mime_type = None
+                inherited_media_document_attributes = None
+            elif reusing_previous_media_blob:
                 inherited_media_file_name = previous_latest_message.media_file_name
                 inherited_media_mime_type = previous_latest_message.media_mime_type
                 inherited_media_document_attributes = (

@@ -21,6 +21,7 @@ from packages.telegram_helpers import (
     resolve_stored_media_file_name,
     send_stored_messages_with_optional_media,
     send_stored_message_with_optional_media,
+    should_persist_message_media,
     serialize_message_document_attributes,
     to_telethon_input_peer,
 )
@@ -31,6 +32,7 @@ from telethon.tl.types import (
     InputPeerChat,
     InputPeerSelf,
     InputPeerUser,
+    MessageMediaWebPage,
 )
 
 
@@ -167,6 +169,17 @@ class GetMessageMediaMetadataTests(unittest.TestCase):
 
         self.assertEqual(result, (None, None))
 
+    def test_ignores_webpage_media_metadata(self):
+        message = MagicMock()
+        message.media = MessageMediaWebPage(webpage=MagicMock())
+        message.file = MagicMock()
+        message.file.name = "preview.mp4"
+        message.file.mime_type = "video/mp4"
+
+        result = get_message_media_metadata(message)
+
+        self.assertEqual(result, (None, None))
+
 
 class GetMessageGroupedIdTests(unittest.TestCase):
     def test_extracts_integer_grouped_id(self):
@@ -231,6 +244,38 @@ class SerializeMessageDocumentAttributesTests(unittest.TestCase):
         self.assertEqual(video_attribute.w, 640)
         self.assertEqual(video_attribute.h, 360)
         self.assertTrue(video_attribute.supports_streaming)
+
+    def test_ignores_webpage_media(self):
+        message = MagicMock()
+        message.media = MessageMediaWebPage(webpage=MagicMock())
+        message.document = MagicMock()
+        message.document.attributes = [
+            DocumentAttributeVideo(
+                duration=5,
+                w=640,
+                h=360,
+                round_message=False,
+                supports_streaming=True,
+            )
+        ]
+
+        serialized = serialize_message_document_attributes(message)
+
+        self.assertIsNone(serialized)
+
+
+class ShouldPersistMessageMediaTests(unittest.TestCase):
+    def test_returns_false_for_webpage_media(self):
+        message = MagicMock()
+        message.media = MessageMediaWebPage(webpage=MagicMock())
+
+        self.assertFalse(should_persist_message_media(message))
+
+    def test_returns_true_for_regular_media(self):
+        message = MagicMock()
+        message.media = MagicMock()
+
+        self.assertTrue(should_persist_message_media(message))
 
 
 class ResolveStoredMediaFileNameTests(unittest.TestCase):

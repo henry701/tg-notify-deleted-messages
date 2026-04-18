@@ -158,8 +158,19 @@ def normalize_optional_string(value) -> str | None:
     return None
 
 
-def get_message_media_metadata(message) -> tuple[str | None, str | None]:
+def should_persist_message_media(message) -> bool:
     if message is None:
+        return False
+    media = getattr(message, "media", None)
+    if media is None:
+        return False
+    if isinstance(media, tl_types.MessageMediaWebPage):
+        return False
+    return True
+
+
+def get_message_media_metadata(message) -> tuple[str | None, str | None]:
+    if not should_persist_message_media(message):
         return (None, None)
     message_file = getattr(message, "file", None)
     return (
@@ -179,7 +190,7 @@ def get_message_grouped_id(message) -> int | None:
 
 
 def serialize_message_document_attributes(message) -> str | None:
-    if message is None:
+    if not should_persist_message_media(message):
         return None
     document = getattr(message, "document", None)
     attributes = getattr(document, "attributes", None)

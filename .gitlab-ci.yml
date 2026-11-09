@@ -143,8 +143,13 @@ integration-postgres:
         sleep 1
       done
       
-      # Get postgres IP from /etc/hosts (Docker service linking)
-      POSTGRES_IP=$(grep postgres /etc/hosts | grep -v '^#' | awk '{print $1}' | head -1)
+      # Get postgres IP from /etc/hosts (Docker service linking).
+      # Single awk with exit: a grep|awk|head pipeline can die with SIGPIPE (exit 141) under pipefail.
+      POSTGRES_IP=$(awk '/postgres/ && !/^#/ {print $1; exit}' /etc/hosts)
+      if [ -z "$POSTGRES_IP" ]; then
+        echo "No postgres entry in /etc/hosts"
+        exit 1
+      fi
       echo "Postgres IP: $POSTGRES_IP"
       echo "export POSTGRES_IP=$POSTGRES_IP" > /tmp/postgres_env.sh
   script:

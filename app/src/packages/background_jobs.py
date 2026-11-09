@@ -5,13 +5,13 @@ import contextlib
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from distutils.util import strtobool
 
 import telethon
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql.expression import delete
 from telethon import TelegramClient
 
+from packages.env_helpers import env_bool
 from packages.event_orchestration import (
     get_should_ignore_message_chat,
     get_store_message_if_not_exists,
@@ -69,7 +69,7 @@ async def clean_old_messages_loop(
 async def preload_messages(
     client: TelegramClient, sqlalchemy_session_maker: sessionmaker
 ):
-    if not bool(strtobool(os.getenv("PRELOAD_MESSAGES", "0"))):
+    if not env_bool("PRELOAD_MESSAGES", False):
         logger.info("PRELOAD_MESSAGES is disabled, skipping preloading messages")
         return
 
@@ -81,7 +81,7 @@ async def preload_messages(
 
     iterated_messages = 0
     preloaded_messages = 0
-    checkpoints_enabled = bool(strtobool(os.getenv("PRELOAD_CHECKPOINTS_ENABLED", "1")))
+    checkpoints_enabled = env_bool("PRELOAD_CHECKPOINTS_ENABLED", True)
     checkpoint_update_every_messages = int(
         os.getenv("PRELOAD_CHECKPOINT_UPDATE_EVERY_MESSAGES", "100")
     )

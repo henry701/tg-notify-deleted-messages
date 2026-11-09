@@ -6,7 +6,6 @@ import logging
 import os
 import tempfile
 from collections.abc import Awaitable, Callable
-from distutils.util import strtobool
 from typing import Any
 
 import sqlalchemy
@@ -20,6 +19,7 @@ from telethon import TelegramClient, events
 from telethon.events import MessageDeleted, MessageEdited, NewMessage
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
 
+from packages.env_helpers import env_bool
 from packages.filtering import raw_should_ignore_message_chat
 from packages.message_loading import (
     load_messages_by_parameters,
@@ -216,14 +216,12 @@ def get_on_message_deleted(
     ],
     gather_with_concurrency_func: Callable,
 ):
-    ignore_channels = bool(strtobool(os.getenv("IGNORE_CHANNELS", "0")))
-    ignore_groups = bool(strtobool(os.getenv("IGNORE_GROUPS", "0")))
-    ignore_megagroups = bool(strtobool(os.getenv("IGNORE_MEGAGROUPS", "0")))
-    ignore_gigagroups = bool(strtobool(os.getenv("IGNORE_GIGAGROUPS", "0")))
+    ignore_channels = env_bool("IGNORE_CHANNELS", False)
+    ignore_groups = env_bool("IGNORE_GROUPS", False)
+    ignore_megagroups = env_bool("IGNORE_MEGAGROUPS", False)
+    ignore_gigagroups = env_bool("IGNORE_GIGAGROUPS", False)
     member_ignore_threshold = int(os.getenv("MEMBER_IGNORE_THRESHOLD", "0"))
-    should_notify_outgoing_messages = bool(
-        strtobool(os.getenv("NOTIFY_OUTGOING_MESSAGES", "True"))
-    )
+    should_notify_outgoing_messages = env_bool("NOTIFY_OUTGOING_MESSAGES", True)
     deleted_messages_notification_concurrency = int(
         os.getenv("DELETED_MESSAGES_NOTIFICATION_CONCURRENCY", "1")
     )
@@ -343,14 +341,12 @@ def get_on_message_edited(
     notify_message_edit: Callable[[TelegramMessage, TelegramClient], Awaitable[Any]],
     gather_with_concurrency_func: Callable,
 ):
-    ignore_channels = bool(strtobool(os.getenv("IGNORE_CHANNELS", "0")))
-    ignore_groups = bool(strtobool(os.getenv("IGNORE_GROUPS", "0")))
-    ignore_megagroups = bool(strtobool(os.getenv("IGNORE_MEGAGROUPS", "0")))
-    ignore_gigagroups = bool(strtobool(os.getenv("IGNORE_GIGAGROUPS", "0")))
+    ignore_channels = env_bool("IGNORE_CHANNELS", False)
+    ignore_groups = env_bool("IGNORE_GROUPS", False)
+    ignore_megagroups = env_bool("IGNORE_MEGAGROUPS", False)
+    ignore_gigagroups = env_bool("IGNORE_GIGAGROUPS", False)
     member_ignore_threshold = int(os.getenv("MEMBER_IGNORE_THRESHOLD", "0"))
-    should_notify_outgoing_messages = bool(
-        strtobool(os.getenv("NOTIFY_OUTGOING_MESSAGES", "True"))
-    )
+    should_notify_outgoing_messages = env_bool("NOTIFY_OUTGOING_MESSAGES", True)
     edited_messages_notification_concurrency = int(
         os.getenv("EDITED_MESSAGES_NOTIFICATION_CONCURRENCY", "1")
     )
@@ -530,10 +526,10 @@ def get_should_ignore_message(client: TelegramClient):
 
 
 def get_should_ignore_message_chat(client: TelegramClient):
-    ignore_channels = bool(strtobool(os.getenv("IGNORE_CHANNELS", "0")))
-    ignore_groups = bool(strtobool(os.getenv("IGNORE_GROUPS", "0")))
-    ignore_megagroups = bool(strtobool(os.getenv("IGNORE_MEGAGROUPS", "0")))
-    ignore_gigagroups = bool(strtobool(os.getenv("IGNORE_GIGAGROUPS", "0")))
+    ignore_channels = env_bool("IGNORE_CHANNELS", False)
+    ignore_groups = env_bool("IGNORE_GROUPS", False)
+    ignore_megagroups = env_bool("IGNORE_MEGAGROUPS", False)
+    ignore_gigagroups = env_bool("IGNORE_GIGAGROUPS", False)
     member_ignore_threshold = int(os.getenv("MEMBER_IGNORE_THRESHOLD", "0"))
 
     async def should_ignore_message_chat(

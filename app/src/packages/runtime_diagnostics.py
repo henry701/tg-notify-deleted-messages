@@ -5,15 +5,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from distutils.util import strtobool
 from pathlib import Path
+
+from packages.env_helpers import env_bool
 
 PROCESS_STATUS_PATH = Path("/proc/self/status")
 PROCESS_FD_PATH = Path("/proc/self/fd")
 
 
 def runtime_diagnostics_enabled() -> bool:
-    return bool(strtobool(os.getenv("LOG_RUNTIME_DIAGNOSTICS", "0")))
+    return env_bool("LOG_RUNTIME_DIAGNOSTICS", False)
 
 
 def _extract_status_kb_value(status_text: str, field_name: str) -> int | None:

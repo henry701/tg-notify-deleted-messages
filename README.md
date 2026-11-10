@@ -31,7 +31,7 @@ Install the dependencies into a project virtualenv (not the system or user site)
 python3 -m venv venv
 venv/bin/python -m pip install -r app/meta/requirements/base.txt \
   -r app/meta/requirements/db_cripto.txt -r requirements-dev.txt \
-  git+https://github.com/henry701/telethon-session-sqlalchemy@12615470b54e75055d2bc1d73d56b13ca41a1875
+  git+https://github.com/henry701/telethon-session-sqlalchemy@947580d6df54797ce94c30978926c030f8c03d88
 ```
 
 The integration tests also need a driver for the database under test, e.g.

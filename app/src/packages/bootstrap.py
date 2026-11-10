@@ -7,13 +7,13 @@ import signal
 import threading
 import time
 from collections.abc import Callable
-from distutils.util import strtobool
 
 import telethon
 from alchemysession import AlchemySessionContainer
 from telethon import TelegramClient
 from telethon.errors.rpcerrorlist import AuthKeyDuplicatedError
 
+from packages.env_helpers import env_bool
 from packages.background_jobs import (
     clean_old_messages_loop,
     messages_ttl_delta,
@@ -111,7 +111,7 @@ async def make_client(
             request_retries=50,
             connection_retries=None,
             entity_cache_limit=int(os.getenv("TELETHON_ENTITY_CACHE_LIMIT", "5000")),
-            use_ipv6=bool(strtobool(os.getenv("USE_IPV6", "0"))),
+            use_ipv6=env_bool("USE_IPV6", False),
         )
 
     telegram_session = alchemy_telegram_container.new_session(session_id)
@@ -163,7 +163,7 @@ async def configure_bot(
         logger.info("Using bot for message notification")
         bot = BotAssistant(
             int(target_chat)
-            if bool(strtobool(os.getenv("TARGET_CHAT_IS_ID", "0")))
+            if env_bool("TARGET_CHAT_IS_ID", False)
             else target_chat,
             telegram_api_id,
             telegram_api_hash,

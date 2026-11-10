@@ -86,7 +86,7 @@ RUN --mount=type=bind,source=./app/meta/requirements/perf.txt,target=/usr/app/me
 ARG DRIVER_PSYCOPG2=1
 RUN --mount=type=bind,source=./app/meta/requirements/pgsql-psycopg2.txt,target=/usr/app/meta/requirements/pgsql-psycopg2.txt if [[ "$DRIVER_PSYCOPG2" -eq 1 ]]; then apk --no-cache add postgresql-dev libpq && pip3 install --no-cache -r /usr/app/meta/requirements/pgsql-psycopg2.txt; fi
 ARG DRIVER_PSYCOPG3=1
-RUN --mount=type=bind,source=./app/meta/requirements/pgsql-psycopg3.txt,target=/usr/app/meta/requirements/pgsql-psycopg3.txt if [[ "$DRIVER_PSYCOPG2" -eq 1 ]]; then apk --no-cache add postgresql-dev libpq && pip3 install --no-cache -r /usr/app/meta/requirements/pgsql-psycopg3.txt; fi
+RUN --mount=type=bind,source=./app/meta/requirements/pgsql-psycopg3.txt,target=/usr/app/meta/requirements/pgsql-psycopg3.txt if [[ "$DRIVER_PSYCOPG3" -eq 1 ]]; then apk --no-cache add postgresql-dev libpq && pip3 install --no-cache -r /usr/app/meta/requirements/pgsql-psycopg3.txt; fi
 ARG DRIVER_PG8000=1
 RUN --mount=type=bind,source=./app/meta/requirements/pgsql-pg8000.txt,target=/usr/app/meta/requirements/pgsql-pg8000.txt if [[ "$DRIVER_PG8000" -eq 1 ]]; then pip3 install --no-cache -r /usr/app/meta/requirements/pgsql-pg8000.txt; fi
 ARG SUPPORTS_GUNICORN=1

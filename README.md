@@ -25,14 +25,26 @@ docker-compose stop app
 
 ## Run tests
 
+Install the dependencies into a project virtualenv (not the system or user site):
+
 ```bash
-PYTHONPATH=app/src python3 -m pytest tests/test_*.py -v
+python3 -m venv venv
+venv/bin/python -m pip install -r app/meta/requirements/base.txt \
+  -r app/meta/requirements/db_cripto.txt -r requirements-dev.txt \
+  git+https://github.com/henry701/telethon-session-sqlalchemy@947580d6df54797ce94c30978926c030f8c03d88
+```
+
+The integration tests also need a driver for the database under test, e.g.
+`venv/bin/python -m pip install -r app/meta/requirements/pgsql-psycopg3.txt`.
+
+```bash
+PYTHONPATH=app/src venv/bin/python -m pytest tests/test_*.py -v
 ```
 
 Or with unittest discover:
 
 ```bash
-PYTHONPATH=app/src python3 -m unittest discover -s tests -p "test_*.py" -v
+PYTHONPATH=app/src venv/bin/python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
 ## Run integration tests
@@ -41,14 +53,14 @@ SQLite (ephemeral file):
 
 ```bash
 INTEGRATION_DATABASE_URL=sqlite+pysqlite:////tmp/tgdel-integration.sqlite3 \
-PYTHONPATH=app/src python3 -m unittest discover -s tests -p "integration_*.py" -v
+PYTHONPATH=app/src venv/bin/python -m unittest discover -s tests -p "integration_*.py" -v
 ```
 
 Postgres:
 
 ```bash
 INTEGRATION_DATABASE_URL=postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres \
-PYTHONPATH=app/src python3 -m unittest discover -s tests -p "integration_*.py" -v
+PYTHONPATH=app/src venv/bin/python -m unittest discover -s tests -p "integration_*.py" -v
 ```
 
 ## Disk usage and attachments

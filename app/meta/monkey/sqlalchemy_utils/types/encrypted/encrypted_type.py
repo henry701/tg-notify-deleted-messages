@@ -37,11 +37,39 @@ except ImportError:
 
 
 # Searchable AES ciphertext pickles the value before AES-CBC. Python 3.14
-# changed pickle.DEFAULT_PROTOCOL from 4 (CPython 3.12) to 5,
-# so WHERE clauses on encrypted columns missed existing rows. Pin protocol 4
-# so bind-time ciphertext stays compatible. pickle.loads still reads older
+# changed pickle.DEFAULT_PROTOCOL from 4 (CPython 3.12) to 5, so WHERE clauses
+# on encrypted columns missed existing rows unless the protocol is pinned.
+# Default is protocol 5; set ENCRYPTED_TYPE_PICKLE_PROTOCOL to 4 to keep
+# matching rows written under Python 3.12. pickle.loads still reads older
 # protocols, which is why unfiltered SELECTs kept decrypting after the bump.
-PICKLE_PROTOCOL = 4
+ENCRYPTED_TYPE_PICKLE_PROTOCOL_ENV = "ENCRYPTED_TYPE_PICKLE_PROTOCOL"
+DEFAULT_ENCRYPTED_TYPE_PICKLE_PROTOCOL = 5
+
+
+def encrypted_type_pickle_protocol() -> int:
+    """Return the pickle protocol used when encrypting values.
+
+    Reads ``ENCRYPTED_TYPE_PICKLE_PROTOCOL`` as an integer in
+    ``0..pickle.HIGHEST_PROTOCOL``. If the variable is unset, returns
+    ``DEFAULT_ENCRYPTED_TYPE_PICKLE_PROTOCOL`` (5). Invalid values raise
+    ``ValueError`` so the process can fail fast at startup.
+    """
+    raw = os.getenv(ENCRYPTED_TYPE_PICKLE_PROTOCOL_ENV)
+    if raw is None:
+        return DEFAULT_ENCRYPTED_TYPE_PICKLE_PROTOCOL
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(
+            f"{ENCRYPTED_TYPE_PICKLE_PROTOCOL_ENV} must be an integer between "
+            f"0 and {pickle.HIGHEST_PROTOCOL} (inclusive), got {raw!r}"
+        ) from None
+    if value < 0 or value > pickle.HIGHEST_PROTOCOL:
+        raise ValueError(
+            f"{ENCRYPTED_TYPE_PICKLE_PROTOCOL_ENV} must be an integer between "
+            f"0 and {pickle.HIGHEST_PROTOCOL} (inclusive), got {value}"
+        )
+    return value
 
 
 class InvalidCiphertextError(Exception):
@@ -113,7 +141,7 @@ class AesEngine(EncryptionDecryptionBaseEngine):
         self.padding_engine = padding_class(self.BLOCK_SIZE)
 
     def encrypt(self, value):
-        value = pickle.dumps(value, protocol=PICKLE_PROTOCOL)
+        value = pickle.dumps(value, protocol=encrypted_type_pickle_protocol())
         value = self.padding_engine.pad(value)
         encryptor = self.cipher.encryptor()
         encrypted = encryptor.update(value) + encryptor.finalize()
@@ -152,7 +180,7 @@ class AesGcmEngine(EncryptionDecryptionBaseEngine):
         self.secret_key = parent_class_key
 
     def encrypt(self, value):
-        value = pickle.dumps(value, protocol=PICKLE_PROTOCOL)
+        value = pickle.dumps(value, protocol=encrypted_type_pickle_protocol())
         iv = os.urandom(self.IV_BYTES_NEEDED)
         cipher = Cipher(
             algorithms.AES(self.secret_key), modes.GCM(iv), backend=default_backend()
@@ -195,7 +223,7 @@ class FernetEngine(EncryptionDecryptionBaseEngine):
         self.fernet = Fernet(self.secret_key)
 
     def encrypt(self, value):
-        value = pickle.dumps(value, protocol=PICKLE_PROTOCOL)
+        value = pickle.dumps(value, protocol=encrypted_type_pickle_protocol())
         encrypted = self.fernet.encrypt(value)
         return encrypted.decode("utf-8")
 

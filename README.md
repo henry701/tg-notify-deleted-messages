@@ -9,6 +9,12 @@ deleted or edited in monitored chats.
 1. Go to <https://my.telegram.org> . Select "API development tools" and create application.
 2. Copy `.env.example` file with name `.env` and change values.
 
+Searchable encrypted database columns pickle values before encryption. Set
+`ENCRYPTED_TYPE_PICKLE_PROTOCOL` to an integer between `0` and the running
+interpreter's `pickle.HIGHEST_PROTOCOL` (inclusive). The default is `5`. Use
+`4` if you need to keep matching rows written under Python 3.12, which used
+pickle protocol 4. An invalid value fails at startup.
+
 ## Start daemon
 
 ```bash

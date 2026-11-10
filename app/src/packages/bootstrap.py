@@ -360,6 +360,12 @@ def worker_function(
 
 
 def create_app_and_start_jobs() -> tuple:
+    from sqlalchemy_utils.types.encrypted.encrypted_type import (
+        encrypted_type_pickle_protocol,
+    )
+
+    encrypted_type_pickle_protocol()
+
     from packages.background_jobs import gather_with_concurrency
 
     loop: asyncio.AbstractEventLoop = asyncio.events.new_event_loop()

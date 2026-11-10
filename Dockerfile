@@ -1,6 +1,7 @@
 ARG PYTHON_RUNTIME="cpython"
 
-FROM alpine:3 AS base
+# Pin Alpine 3.24 / CPython 3.14; floating alpine:3 moved from Python 3.12 to 3.14.
+FROM alpine:3.24 AS base
 
 FROM base AS common
 ENV PYTHONUNBUFFERED=1

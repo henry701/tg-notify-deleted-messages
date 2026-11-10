@@ -11,6 +11,11 @@ from packages.env_helpers import load_env, require_env
 BASE_DIR = pathlib.Path(__file__).parent.absolute().resolve()
 CONF_DIR = (BASE_DIR / ".." / "conf").absolute().resolve()
 load_env(CONF_DIR)
+from sqlalchemy_utils.types.encrypted.encrypted_type import (  # noqa: E402
+    encrypted_type_pickle_protocol,
+)
+
+encrypted_type_pickle_protocol()
 DEFAULT_LOGGING_LEVEL = os.getenv("DEFAULT_LOGGING_LEVEL", logging.INFO)
 logging.basicConfig(
     level=os.getenv("ROOT_LOGGING_LEVEL", DEFAULT_LOGGING_LEVEL), force=True

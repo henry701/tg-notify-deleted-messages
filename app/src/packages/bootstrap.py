@@ -45,11 +45,56 @@ logger = logging.getLogger("tgdel-bootstrap")
 is_exiting = False
 
 
+def _is_running_in_loop_thread(loop: asyncio.AbstractEventLoop) -> bool:
+    if not loop.is_running():
+        return False
+    try:
+        return asyncio.get_running_loop() is loop
+    except RuntimeError:
+        return False
+
+
+async def _ask_exit_cleanup(
+    loop: asyncio.AbstractEventLoop,
+    additional: Callable | None,
+):
+    if additional is not None:
+        logger.info("[exit] Running user-provided cleanupper")
+        try:
+            await additional()
+        except RuntimeError as e:
+            if "Event loop stopped before Future completed" not in str(e):
+                logger.error(
+                    "[exit] Error while running user-provided cleanupper",
+                    exc_info=True,
+                )
+        else:
+            logger.info("[exit] Successfully ran user-provided cleanupper")
+    current = asyncio.current_task(loop)
+    to_cancel = [task for task in asyncio.all_tasks(loop) if task is not current]
+    tasklen = len(to_cancel)
+    if tasklen > 0:
+        logger.warning(f"[exit] Cancelling all remaining {tasklen} asyncio tasks!")
+        for task in to_cancel:
+            task.cancel()
+        await asyncio.gather(*to_cancel, return_exceptions=True)
+        logger.warning(f"[exit] Cancelled all remaining {tasklen} asyncio tasks!")
+    logger.info("[exit] Stopping the loop!")
+    # Schedule stop after this task finishes so run_coroutine_threadsafe
+    # can complete its Future. loop.stop() here would drop that callback
+    # and hang the caller.
+    loop.call_soon(loop.stop)
+    logger.info("[exit] Bye bye! Gracefully exited.")
+
+
 def ask_exit(
     signame: str | None,
     loop: asyncio.AbstractEventLoop,
     additional: Callable,
 ):
+    # Do not call run_until_complete on a running loop. nest_asyncio 1.6.0
+    # (archived) patches that, but on Python 3.14 asyncio.wait_for uses
+    # timeouts.timeout, which raises "Timeout should be used inside a task".
     if signame:
         logger.warning("[exit] Got signal %s: exiting!" % signame)
     else:
@@ -59,28 +104,14 @@ def ask_exit(
         logger.info("ask_exit re-entry detected, ignoring")
         return
     is_exiting = True
-    if additional is not None:
-        logger.info("[exit] Running user-provided cleanupper")
-        try:
-            loop.run_until_complete(additional())
-        except RuntimeError as e:
-            if "Event loop stopped before Future completed" not in str(e):
-                logger.error(
-                    "[exit] Error while running user-provided cleanupper",
-                    exc_info=True,
-                )
-        else:
-            logger.info("[exit] Successfully ran user-provided cleanupper")
-    all_tasks = asyncio.all_tasks(loop)
-    tasklen = len(all_tasks)
-    if tasklen > 0:
-        logger.warning(f"[exit] Cancelling all remaining {tasklen} asyncio tasks!")
-        for task in all_tasks:
-            task.cancel()
-        logger.warning(f"[exit] Cancelled all remaining {tasklen} asyncio tasks!")
-    logger.info("[exit] Stopping the loop!")
-    loop.stop()
-    logger.info("[exit] Bye bye! Gracefully exited.")
+    cleanup = _ask_exit_cleanup(loop, additional)
+    if _is_running_in_loop_thread(loop):
+        loop.create_task(cleanup)
+        return
+    if loop.is_running():
+        asyncio.run_coroutine_threadsafe(cleanup, loop).result()
+        return
+    loop.run_until_complete(cleanup)
 
 
 async def make_client(
@@ -332,9 +363,6 @@ def create_app_and_start_jobs() -> tuple:
     from packages.background_jobs import gather_with_concurrency
 
     loop: asyncio.AbstractEventLoop = asyncio.events.new_event_loop()
-    import nest_asyncio
-
-    nest_asyncio.apply(loop)
 
     closer = Closer()
 

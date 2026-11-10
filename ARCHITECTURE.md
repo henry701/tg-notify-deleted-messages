@@ -45,7 +45,7 @@ app/src/
 
 `create_app_and_start_jobs()` in `bootstrap.py` orchestrates startup:
 
-1. Create asyncio event loop, apply `nest_asyncio`
+1. Create asyncio event loop (no `nest_asyncio`; shutdown schedules cleanup on the running loop instead of nested `run_until_complete`)
 2. Set up database engine, session factory, and Telegram session container
 3. Configure optional bot assistant for notifications
 4. Create and connect the main Telegram client

@@ -113,17 +113,18 @@ class MakeSyncCloserTests(unittest.TestCase):
         sync_closer = make_sync_closer(closer, loop)
         self.assertTrue(callable(sync_closer))
 
-    @patch("packages.bootstrap.is_exiting", False)
-    @patch("packages.bootstrap.asyncio.all_tasks", return_value=set())
-    def test_triggers_ask_exit_when_called(self, mock_all_tasks):
+    def test_triggers_ask_exit_when_called(self):
+        from packages import bootstrap as bootstrap_mod
+
+        loop = asyncio.new_event_loop()
         closer = Closer()
-        loop = MagicMock()
-        loop.run_until_complete.side_effect = lambda coro: coro.close()
+        bootstrap_mod.is_exiting = False
         sync_closer = make_sync_closer(closer, loop)
         with patch("packages.bootstrap.logger"):
             sync_closer()
-        loop.run_until_complete.assert_called_once()
-        loop.stop.assert_called_once()
+        self.assertTrue(closer.called)
+        loop.close()
+        bootstrap_mod.is_exiting = False
 
 
 class AddSignalHandlersTests(unittest.TestCase):
@@ -135,113 +136,134 @@ class AddSignalHandlersTests(unittest.TestCase):
 
 
 class AskExitTests(unittest.TestCase):
-    @patch("packages.bootstrap.is_exiting", False)
-    @patch("packages.bootstrap.asyncio.all_tasks", return_value=set())
-    def test_logs_signal_name(self, mock_all_tasks):
-        loop = MagicMock()
-        closer_coro = MagicMock()
+    def setUp(self):
+        from packages import bootstrap as bootstrap_mod
 
+        self.bootstrap_mod = bootstrap_mod
+        bootstrap_mod.is_exiting = False
+        self.loop = asyncio.new_event_loop()
+
+    def tearDown(self):
+        if not self.loop.is_closed():
+            self.loop.close()
+        self.bootstrap_mod.is_exiting = False
+
+    async def _noop(self):
+        return None
+
+    def test_logs_signal_name(self):
         with patch("packages.bootstrap.logger") as mock_logger:
-            ask_exit("SIGTERM", loop, closer_coro)
+            ask_exit("SIGTERM", self.loop, self._noop)
             mock_logger.warning.assert_any_call("[exit] Got signal SIGTERM: exiting!")
 
-    @patch("packages.bootstrap.is_exiting", False)
-    @patch("packages.bootstrap.asyncio.all_tasks", return_value=set())
-    def test_graceful_exit_without_signal(self, mock_all_tasks):
-        loop = MagicMock()
-        closer_coro = MagicMock()
-
+    def test_graceful_exit_without_signal(self):
         with patch("packages.bootstrap.logger") as mock_logger:
-            ask_exit(None, loop, closer_coro)
+            ask_exit(None, self.loop, self._noop)
             mock_logger.info.assert_any_call(
                 "[exit] Gracefully exiting, called from code!"
             )
 
-    @patch("packages.bootstrap.is_exiting", True)
     def test_reentry_detected(self):
-        loop = MagicMock()
-        closer_coro = MagicMock()
-
+        self.bootstrap_mod.is_exiting = True
         with patch("packages.bootstrap.logger") as mock_logger:
-            ask_exit("SIGINT", loop, closer_coro)
+            ask_exit("SIGINT", self.loop, self._noop)
             mock_logger.info.assert_any_call("ask_exit re-entry detected, ignoring")
 
-    @patch("packages.bootstrap.is_exiting", False)
-    @patch("packages.bootstrap.asyncio.all_tasks")
-    def test_cancels_all_tasks(self, mock_all_tasks):
-        loop = MagicMock()
-        closer_coro = MagicMock()
+    def test_cancels_all_tasks(self):
+        cancelled = []
 
-        task_mock = MagicMock()
-        task_mock.cancel = MagicMock()
-        mock_all_tasks.return_value = {task_mock}
+        async def lingering():
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.append(True)
+                raise
 
-        ask_exit(None, loop, closer_coro)
-        task_mock.cancel.assert_called_once()
+        self.loop.create_task(lingering())
+        ask_exit(None, self.loop, self._noop)
+        self.assertEqual(cancelled, [True])
 
-    @patch("packages.bootstrap.is_exiting", False)
-    @patch("packages.bootstrap.asyncio.all_tasks", return_value=set())
-    def test_stops_loop(self, mock_all_tasks):
-        loop = MagicMock()
-        closer_coro = MagicMock()
+    def test_stops_loop(self):
+        ask_exit(None, self.loop, self._noop)
+        # stop() is a no-op if the loop is not running; the cleanup path
+        # still invoked it. Re-create the check via a running loop below.
+        # For the idle-loop path, cleanup completed without error.
+        self.assertFalse(self.loop.is_running())
 
-        ask_exit(None, loop, closer_coro)
-        loop.stop.assert_called_once()
+    def test_runs_additional_cleaner(self):
+        called = []
 
-    @patch("packages.bootstrap.is_exiting", False)
-    @patch("packages.bootstrap.asyncio.all_tasks", return_value=set())
-    def test_runs_additional_cleaner(self, mock_all_tasks):
-        loop = MagicMock()
-        closer_coro = MagicMock()
+        async def closer():
+            called.append(True)
 
-        ask_exit(None, loop, closer_coro)
-        loop.run_until_complete.assert_called_once_with(closer_coro())
+        ask_exit(None, self.loop, closer)
+        self.assertEqual(called, [True])
 
-    @patch("packages.bootstrap.is_exiting", False)
-    @patch("packages.bootstrap.asyncio.all_tasks", return_value=set())
-    def test_skips_additional_when_none(self, mock_all_tasks):
-        loop = MagicMock()
+    def test_skips_additional_when_none(self):
+        ask_exit(None, self.loop, None)
+        self.assertFalse(self.loop.is_running())
 
-        ask_exit(None, loop, None)
-        loop.run_until_complete.assert_not_called()
-        loop.stop.assert_called_once()
-
-    @patch("packages.bootstrap.is_exiting", False)
-    @patch("packages.bootstrap.asyncio.all_tasks", return_value=set())
-    def test_runtimeerror_event_loop_stopped_ignored(self, mock_all_tasks):
-        loop = MagicMock()
-        loop.run_until_complete.side_effect = RuntimeError(
-            "Event loop stopped before Future completed"
-        )
-        closer_coro = MagicMock()
+    def test_runtimeerror_event_loop_stopped_ignored(self):
+        async def closer():
+            raise RuntimeError("Event loop stopped before Future completed")
 
         with patch("packages.bootstrap.logger") as mock_logger:
-            ask_exit(None, loop, closer_coro)
+            ask_exit(None, self.loop, closer)
             mock_logger.error.assert_not_called()
-            loop.stop.assert_called_once()
 
-    @patch("packages.bootstrap.is_exiting", False)
-    @patch("packages.bootstrap.asyncio.all_tasks", return_value=set())
-    def test_runtimeerror_other_logged(self, mock_all_tasks):
-        loop = MagicMock()
-        loop.run_until_complete.side_effect = RuntimeError("some other error")
-        closer_coro = MagicMock()
+    def test_runtimeerror_other_logged(self):
+        async def closer():
+            raise RuntimeError("some other error")
 
         with patch("packages.bootstrap.logger") as mock_logger:
-            ask_exit(None, loop, closer_coro)
+            ask_exit(None, self.loop, closer)
             mock_logger.error.assert_called_once()
 
-    @patch("packages.bootstrap.is_exiting", False)
-    @patch("packages.bootstrap.asyncio.all_tasks", return_value=set())
-    def test_successful_additional_runs_else_branch(self, mock_all_tasks):
-        loop = MagicMock()
-        closer_coro = MagicMock()
-
+    def test_successful_additional_runs_else_branch(self):
         with patch("packages.bootstrap.logger") as mock_logger:
-            ask_exit(None, loop, closer_coro)
+            ask_exit(None, self.loop, self._noop)
             mock_logger.info.assert_any_call(
                 "[exit] Successfully ran user-provided cleanupper"
             )
+
+    def test_cleanup_from_running_loop_without_nesting_run_until_complete(self):
+        called = []
+
+        async def closer():
+            called.append(True)
+
+        def kick():
+            ask_exit(None, self.loop, closer)
+
+        self.loop.call_soon(kick)
+        self.loop.run_forever()
+        self.assertEqual(called, [True])
+        self.assertFalse(self.loop.is_running())
+
+    def test_cleanup_from_other_thread_while_loop_running(self):
+        import threading
+        import time
+
+        called = []
+
+        async def closer():
+            called.append(True)
+
+        def run_loop():
+            asyncio.set_event_loop(self.loop)
+            self.loop.run_forever()
+
+        thread = threading.Thread(target=run_loop, name="ask-exit-loop")
+        thread.start()
+        for _ in range(200):
+            if self.loop.is_running():
+                break
+            time.sleep(0.01)
+        self.assertTrue(self.loop.is_running())
+        ask_exit(None, self.loop, closer)
+        thread.join(timeout=5)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(called, [True])
 
 
 class ConfigureBotTests(unittest.IsolatedAsyncioTestCase):

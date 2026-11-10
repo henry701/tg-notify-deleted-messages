@@ -6,10 +6,10 @@ import base64
 import datetime
 import json
 import os
+import pickle
 import warnings
 
 import six
-import pickle
 from sqlalchemy.types import LargeBinary, String, TypeDecorator
 
 from sqlalchemy_utils.exceptions import ImproperlyConfigured
@@ -34,6 +34,14 @@ try:
     from dateutil.parser import parse as datetime_parse
 except ImportError:
     pass
+
+
+# Searchable AES ciphertext pickles the value before AES-CBC. Python 3.14
+# changed pickle.DEFAULT_PROTOCOL from 4 (CPython 3.12) to 5,
+# so WHERE clauses on encrypted columns missed existing rows. Pin protocol 4
+# so bind-time ciphertext stays compatible. pickle.loads still reads older
+# protocols, which is why unfiltered SELECTs kept decrypting after the bump.
+PICKLE_PROTOCOL = 4
 
 
 class InvalidCiphertextError(Exception):
@@ -105,7 +113,7 @@ class AesEngine(EncryptionDecryptionBaseEngine):
         self.padding_engine = padding_class(self.BLOCK_SIZE)
 
     def encrypt(self, value):
-        value = pickle.dumps(value)
+        value = pickle.dumps(value, protocol=PICKLE_PROTOCOL)
         value = self.padding_engine.pad(value)
         encryptor = self.cipher.encryptor()
         encrypted = encryptor.update(value) + encryptor.finalize()
@@ -144,7 +152,7 @@ class AesGcmEngine(EncryptionDecryptionBaseEngine):
         self.secret_key = parent_class_key
 
     def encrypt(self, value):
-        value = pickle.dumps(value)
+        value = pickle.dumps(value, protocol=PICKLE_PROTOCOL)
         iv = os.urandom(self.IV_BYTES_NEEDED)
         cipher = Cipher(
             algorithms.AES(self.secret_key), modes.GCM(iv), backend=default_backend()
@@ -187,7 +195,7 @@ class FernetEngine(EncryptionDecryptionBaseEngine):
         self.fernet = Fernet(self.secret_key)
 
     def encrypt(self, value):
-        value = pickle.dumps(value)
+        value = pickle.dumps(value, protocol=PICKLE_PROTOCOL)
         encrypted = self.fernet.encrypt(value)
         return encrypted.decode("utf-8")
 

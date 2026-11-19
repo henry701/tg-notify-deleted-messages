@@ -31,8 +31,7 @@ def get_base_notify_message_deletion(
         )
         with sqlalchemy_session_maker.begin() as session:
             for stored_message in album_messages:
-                session.merge(stored_message)
-                stored_message.deleted = True  # type: ignore
+                session.merge(stored_message).deleted = True
 
     return base_notify_message_deletion
 
